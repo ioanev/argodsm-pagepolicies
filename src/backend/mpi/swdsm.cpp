@@ -95,13 +95,13 @@ char * barwindowsused;
 sem_t ibsem;
 
 /*Loading and Prefetching*/
-/** @brief Tracking address of pages that should be loaded by loadthread1 */
+/** @brief Tracking address of pages that should be loaded by loadthread1 */		// this is actually the cacheindex	(change!)
 unsigned long *loadline;
-/** @brief Tracking cacheindex of pages that should be loaded by loadthread1 */
+/** @brief Tracking cacheindex of pages that should be loaded by loadthread1 */		// this is actually the address		//
 unsigned long *loadtag;
-/** @brief Tracking address of pages that should be loaded by loadthread2 */
+/** @brief Tracking address of pages that should be loaded by loadthread2 */		// this is actually the cacheindex	//
 unsigned long *prefetchline;
-/** @brief Tracking cacheindex of pages that should be loaded by loadthread2 */
+/** @brief Tracking cacheindex of pages that should be loaded by loadthread2 */		// this is actually the address		//
 unsigned long *prefetchtag;
 /** @brief loadthread1 waits on this to start loading remote pages */
 sem_t loadstartsem;
@@ -142,6 +142,21 @@ unsigned long GLOBAL_NULL;
 /** @brief  Statistics */
 argo_statistics stats;
 
+/*Policies*/
+#if ARGO_MEM_ALLOC_POLICY == 1 || \
+	ARGO_MEM_ALLOC_POLICY == 2
+/** @brief  Holds the owner of a page */
+unsigned long *globalOwners;
+/** @brief  Size of the owner directory */
+unsigned long ownerSize;
+/** @brief  Allocator offset for the node */
+unsigned long ownerOffset;
+/** @brief  MPI window for communicating owner directory */
+MPI_Win ownerWindow;
+/** @brief  Protects the owner directory */
+pthread_mutex_t ownermutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
 namespace {
 	/** @brief constant for invalid ArgoDSM node */
 	constexpr unsigned long invalid_node = static_cast<unsigned long>(-1);
@@ -152,34 +167,48 @@ unsigned long isPowerOf2(unsigned long x){
   return retval;
 }
 
+/* 
+ * **************************************************************************************
+ * This function scans the whole pagecache for pages that are dirty and if so it calls
+ * the function storepageDIFF() to apply the changes to the page's homenode.
+ * **************************************************************************************
+ */
 void flushWriteBuffer(void){
 	unsigned long i,j;
 	double t1,t2;
 
 	t1 = MPI_Wtime();
-	pthread_mutex_lock(&wbmutex);
+	pthread_mutex_lock(&wbmutex); //														-/-> (wbmutex)
 
-  for(i = 0; i < cachesize; i+=CACHELINE){
-    unsigned long distrAddr = cacheControl[i].tag;
-    if(distrAddr != GLOBAL_NULL){
-
-      unsigned long distrAddr = cacheControl[i].tag;
-      unsigned long lineAddr = distrAddr/(CACHELINE*pagesize);
-      lineAddr*=(pagesize*CACHELINE);
+	// Scan the whole cache for dirty pages.
+	for(i = 0; i < cachesize; i+=CACHELINE){
+		// Get distributed address and check for validity (e.g. 0x1000 not 0x200000001000).
+		unsigned long distrAddr = cacheControl[i].tag;
+		if(distrAddr != GLOBAL_NULL){
+		
+			unsigned long distrAddr = cacheControl[i].tag;
+			unsigned long lineAddr = distrAddr/(CACHELINE*pagesize);
+			lineAddr*=(pagesize*CACHELINE);
+			// Actual address of page in the global address space.
 			void * lineptr = (char*)startAddr + lineAddr;
 
-      argo_byte dirty = cacheControl[i].dirty;
+			// Check if the page is dirty.
+			argo_byte dirty = cacheControl[i].dirty;
 			if(dirty == DIRTY){
+				// Change memory protection for this page so it can be read.
 				mprotect(lineptr, pagesize*CACHELINE, PROT_READ);
+				// Reset the dirty flag.
 				cacheControl[i].dirty=CLEAN;
+				// Apply the local changes of the page to the corresponding homenode.
 				for(j=0; j < CACHELINE; j++){
 					storepageDIFF(i+j,pagesize*j+lineAddr);
 				}
 			}
-    }
-  }
+		}
+	}
 
 	for(i = 0; i < (unsigned long)numtasks; i++){
+		// Close any windows that were opened in storepageDIFF().
 		if(barwindowsused[i] == 1){
 			MPI_Win_unlock(i, globalDataWindow[i]);
 			barwindowsused[i] = 0;
@@ -189,35 +218,49 @@ void flushWriteBuffer(void){
 	writebufferstart = 0;
 	writebufferend = 0;
 
-	pthread_mutex_unlock(&wbmutex);
+	pthread_mutex_unlock(&wbmutex); //														<-/- (wbmutex)
 	t2 = MPI_Wtime();
 	stats.flushtime += t2-t1;
 }
 
+/*
+ * **************************************************************************************
+ * This function pushes cache indices of dirty pages into the writebuffer.
+ * 
+ * It is noteworthy to state that this is a cyclic write buffer. This means that once
+ * downgraded the first page after being full, in the addition of the second page after
+ * that point, it will downgrade again to make space.
+ * **************************************************************************************
+ */
 void addToWriteBuffer(unsigned long cacheIndex){
-	pthread_mutex_lock(&wbmutex);
+	pthread_mutex_lock(&wbmutex); //														-/-> (wbmutex)
 	unsigned long line = cacheIndex/CACHELINE;
 	line *= CACHELINE;
 
+	// If the buffer doesn't hold anything, simply return.
 	if(writebuffer[writebufferend] == line ||
 		 writebuffer[writebufferstart] == line){
-		pthread_mutex_unlock(&wbmutex);
-		return;
+		pthread_mutex_unlock(&wbmutex); //													<-/- (wbmutex)
+		return; //																			RETN
 	}
-  unsigned long wbendplusone = ((writebufferend+1)%writebuffersize);
+	// At some point this will overflow.
+  	unsigned long wbendplusone = ((writebufferend+1)%writebuffersize);
 	unsigned long wbendplustwo = ((writebufferend+2)%writebuffersize);
 	if(wbendplusone == writebufferstart ){ // Buffer is full wait for slot to be empty
 		double t1 = MPI_Wtime();
-		sem_post(&writerstartsem);
-		sem_wait(&writerwaitsem);
+		sem_post(&writerstartsem); //														<-|- (writerstartsem)
+		sem_wait(&writerwaitsem); //														-|-> (writerwaitsem)
 		double t4 = MPI_Wtime();
 		stats.writebacks+=CACHELINE;
 		stats.writebacktime+=(t4-t1);
+		// At this point writebufferstart will be assigned 1.
 		writebufferstart = wbendplustwo;
 	}
+	// The buffer is filled from 0 to WRITE_BUFFER_PAGES.
+	// The write buffer as is can be seen holds cache indeces.
 	writebuffer[writebufferend] = line;
 	writebufferend = wbendplusone;
-	pthread_mutex_unlock(&wbmutex);
+	pthread_mutex_unlock(&wbmutex); //														<-/- (wbmutex)
 }
 
 
@@ -275,12 +318,21 @@ void argo_pin_threads(){
 }
 
 
-//Get cacheindex
+/* 
+ * **************************************************************************************
+ * This funtion returns the cache index of a page based on its address.
+ * **************************************************************************************
+ */
 unsigned long getCacheIndex(unsigned long addr){
 	unsigned long index = (addr/pagesize) % cachesize;
 	return index;
 }
 
+/* 
+ * **************************************************************************************
+ * This funtion creates the struct for cache control data (see swdsm.h)
+ * **************************************************************************************
+ */
 void init_mpi_struct(void){
 	//init our struct coherence unit to work in mpi.
 	const int blocklen[3] = { 1,1,1};
@@ -300,6 +352,11 @@ void init_mpi_cacheblock(void){
 	MPI_Type_commit(&cacheblock);
 }
 
+/* 
+ * **************************************************************************************
+ * This funtion returns the page address of which addr belongs.
+ * **************************************************************************************
+ */
 unsigned long alignAddr(unsigned long addr){
 	unsigned long mod = addr % pagesize;
 	if(addr % pagesize != 0){
@@ -310,61 +367,114 @@ unsigned long alignAddr(unsigned long addr){
 	return addr;
 }
 
+/* 
+ * **************************************************************************************
+ * This function is called when a memory access violation is encountered (SIGSEGV).
+ * 
+ * It is noteworthy to state that the type of the handler is selected from CMakeLists.txt
+ * under the ~/argodsm/src folder. The default selected one is ARGO_VM_SHM, so we are re-
+ * ferring to the functions under shm.cpp.
+ * **************************************************************************************
+ */ 
 void handler(int sig, siginfo_t *si, void *unused){
+	// It doesn't matter if a page belongs to a node.
+	// We get into this function either way.
+
 	UNUSED_PARAM(sig);
 	UNUSED_PARAM(unused);
 	double t1 = MPI_Wtime();
 
 	unsigned long tag;
 	argo_byte owner,state;
+	// Just a note since 4k page granularity, hex(4096) = 0x1000, hex(8192) = 0x2000, etc.
+	// Get the distributed address (e.g. si->si_addr: 0x0x200000003064, startAddr: 0x0x200000000000).
 	unsigned long distrAddr =  (unsigned long)((unsigned long)(si->si_addr) - (unsigned long)(startAddr));
 
+	// Round distrAddr to the page address it belongs (e.g. 0x3064 to 0x3000).
 	unsigned long alignedDistrAddr = alignAddr(distrAddr);
+	// For the default CACHELINE size (1L) this would give 0x0.
 	unsigned long remCACHELINE = alignedDistrAddr % (CACHELINE*pagesize);
+	// If default CACHELINE size this would be the same as alignedDistrAddr.
 	unsigned long lineAddr = alignedDistrAddr - remCACHELINE;
+	// Get index of the page in the sharer vector (e.g. for 0x3000 is 0x6).
 	unsigned long classidx = get_classification_index(lineAddr);
 
+	//printf("(handler) Process: %i, distrAddr: 0x%X, alignedDistrAddr: 0x%X, remCACHELINE: 0x%X, lineAddr: 0x%X, classidx: 0x%X\n", rank, distrAddr, alignedDistrAddr, remCACHELINE, lineAddr, classidx);
+ 
+	// Pointer to the actual address of the page in the global address space (e.g. 0x200000003000).
 	unsigned long * localAlignedAddr = (unsigned long *)((char*)startAddr + lineAddr);
+	// Get index of the page in the pagecache (e.g. for 0x0x200000003000 is 0x3).
 	unsigned long startIndex = getCacheIndex(lineAddr);
 	unsigned long cacheIndex = getCacheIndex(alignedDistrAddr);
 	cacheIndex = startIndex;
 	alignedDistrAddr = lineAddr;
 
+	//printf("(handler) Process: %i, localAlignedAddr: %p, cacheIndex: 0x%X, alignedDistrAddr: 0x%X\n", rank, (void *)localAlignedAddr, cacheIndex, alignedDistrAddr);
+
+	// Get the homenode of the address.
+#if ARGO_MEM_ALLOC_POLICY == 0
 	unsigned long homenode = getHomenode(lineAddr);
+#elif ARGO_MEM_ALLOC_POLICY == 1
+	unsigned long homenode = firstTouch(lineAddr);
+#elif ARGO_MEM_ALLOC_POLICY == 2
+	unsigned long homenode = getHomenode(lineAddr);
+#endif
+	// Offset of the address from the start address of its homenode.
 	unsigned long offset = getOffset(lineAddr);
+	// Shift by process id (e.g. for proc 0 is id = 0x1, for proc 1 is id = 0x2).
 	unsigned long id = 1 << getID();
+	// Reversing the id (e.g. for proc 0 is invid = 0xFFFFFFFE, for proc 1 is invid = 0xFFFFFFFD).
 	unsigned long invid = ~id;
 
-	pthread_mutex_lock(&cachemutex);
+	//printf("(handler) Process: %i, homenode: 0x%X, offset: 0x%X, id: 0x%X, invid: 0x%X\n", rank, homenode, offset, id, invid);
+
+	// Mutex for protecting the pagecache (lock).
+	pthread_mutex_lock(&cachemutex); //														-/-> (cachemutex) 
 
 	/* page is local */
 	if(homenode == (getID())){
 		int n;
-		sem_wait(&ibsem);
+		// Semaphore for protecting Infiniband accesses (wait).
+		sem_wait(&ibsem); //																-|-> (ibsem)
 		unsigned long sharers;
+		// Read the local Pyxis directory.
 		MPI_Win_lock(MPI_LOCK_SHARED, workrank, 0, sharerWindow);
+		// Check if the current process previously shared this page.
 		unsigned long prevsharer = (globalSharers[classidx])&id;
 		MPI_Win_unlock(workrank, sharerWindow);
+
+		// If not previously shared this page.
 		if(prevsharer != id){
+			// Update the local Pyxis directory.
 			MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, sharerWindow);
+			// Get the current sharers for this page.
 			sharers = globalSharers[classidx];
+			// Add the process id to the sharer vector.
 			globalSharers[classidx] |= id;
+			//printf("(prevsharer != id) Process: %i, localAlignedAddr: %p, sharers: 0x%X, globalSharers: 0x%X\n", workrank, (void *)localAlignedAddr, sharers, globalSharers[classidx]);
 			MPI_Win_unlock(workrank, sharerWindow);
+
+			// If there is a single sharer of this page, except this process.
 			if(sharers != 0 && sharers != id && isPowerOf2(sharers)){
 				unsigned long ownid = sharers&invid;
 				unsigned long owner = workrank;
+				// Find the sharer of this page and get its rank.
 				for(n=0; n<numtasks; n++){
 					if((unsigned long)(1<<n)==ownid){
 						owner = n; //just get rank...
+						//printf("(prevsharer != id) Process: %i, got owner process 0x%X\n", workrank, owner);
 						break;
 					}
 				}
+				// This of course shouldn't happen.
 				if(owner==(unsigned long)workrank){
 					throw "bad owner in local access";
 				}
 				else{
 					/* update remote private holder to shared */
 					MPI_Win_lock(MPI_LOCK_EXCLUSIVE, owner, 0, sharerWindow);
+					// (MPI_BOR = Bitwise OR)
+					// Deposit the process id to the "readers" part (classidx) of the owner's directory. QUESTION: To the directory or to the pagecache?
 					MPI_Accumulate(&id, 1, MPI_LONG, owner, classidx,1,MPI_LONG,MPI_BOR,sharerWindow);
 					MPI_Win_unlock(owner, sharerWindow);
 				}
@@ -374,33 +484,43 @@ void handler(int sig, siginfo_t *si, void *unused){
 			vm::map_memory(localAlignedAddr, pagesize*CACHELINE, cacheoffset+offset, PROT_READ);
 
 		}
+		// If previously shared this page, then the segmentation should refer to the write permissions.
 		else{
 
 			/* get current sharers/writers and then add your own id */
 			MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, sharerWindow);
 			unsigned long sharers = globalSharers[classidx];
 			unsigned long writers = globalSharers[classidx+1];
+			// Add the process id to the writers.
 			globalSharers[classidx+1] |= id;
+			//printf("(prevsharer == id) Process: %i, localAlignedAddr: %p, sharers: 0x%X, writers: 0x%X, globalWriters: 0x%X\n", workrank, (void *)localAlignedAddr, sharers, writers, globalSharers[classidx+1]);
 			MPI_Win_unlock(workrank, sharerWindow);
 
 			/* remote single writer */
 			if(writers != id && writers != 0 && isPowerOf2(writers&invid)){
 				int n;
+				// Find the writer of this page and get its rank.
 				for(n=0; n<numtasks; n++){
 					if(((unsigned long)(1<<n))==(writers&invid)){
 						owner = n; //just get rank...
 						break;
 					}
 				}
+				// Deposit the process id to the "writers" part (classidx+1) of the owner's directory. QUESTION: To the directory or to the pagecache?
 				MPI_Win_lock(MPI_LOCK_EXCLUSIVE, owner, 0, sharerWindow);
 				MPI_Accumulate(&id, 1, MPI_LONG, owner, classidx+1,1,MPI_LONG,MPI_BOR,sharerWindow);
 				MPI_Win_unlock(owner, sharerWindow);
 			}
+			// If the process is the single writer or no writers exist at all.
+			// Note: This "||" conditions here and there may be because the MPI-RMA
+			// operations may be unordered or their result may be delayed to be seen.
 			else if(writers == id || writers == 0){
 				int n;
+				// Inform all the sharers that now there is a writer.
 				for(n=0; n<numtasks; n++){
 					if(n != workrank && ((1<<n)&sharers) != 0){
 						MPI_Win_lock(MPI_LOCK_EXCLUSIVE, n, 0, sharerWindow);
+						// Deposit the process id to the "writers" part (classidx+1) of the owner's directory. QUESTION: To the directory or to the pagecache?
 						MPI_Accumulate(&id, 1, MPI_LONG, n, classidx+1,1,MPI_LONG,MPI_BOR,sharerWindow);
 						MPI_Win_unlock(n, sharerWindow);
 					}
@@ -410,63 +530,83 @@ void handler(int sig, siginfo_t *si, void *unused){
 			vm::map_memory(localAlignedAddr, pagesize*CACHELINE, cacheoffset+offset, PROT_READ|PROT_WRITE);
 
 		}
-		sem_post(&ibsem);
-		pthread_mutex_unlock(&cachemutex);
-		return;
+		sem_post(&ibsem); //																<-|- (ibsem)
+		pthread_mutex_unlock(&cachemutex); //												<-/- (cachemutex)
+		return; //																			RETN
 	}
+	// If the page does not belong to the process (node)...
 
 	state  = cacheControl[startIndex].state;
 	tag = cacheControl[startIndex].tag;
 
+	//printf("(handler) Process: %i, localAlignedAddr: %p, state: 0x%X, tag: 0x%X\n", workrank, (void *)localAlignedAddr, state, tag);
+
+	// If the state in the corresponding location in the pagecache is INVALID
+	// and the relevant tag does not correspond to that page and it is valid.
 	if(state == INVALID || (tag != lineAddr && tag != GLOBAL_NULL)){
+		// If the prefetchline holds a valid cache indice, but loadline doesn't,
+		// then try to set the loadline based on the prefetchline indice.
 		if(loadline[0] == GLOBAL_NULL && prefetchline[0] != GLOBAL_NULL){
 			if(prefetchline[0] <= startIndex && startIndex < prefetchline[0]+CACHELINE){
+				// Make loadline point to the next page than that of prefetchline.
 				loadline[0]= (startIndex+CACHELINE)%cachesize;
 				loadtag[0]=lineAddr+pagesize*CACHELINE;
 			}
 			else{
+				// Make loadline point to the previous page than that of prefetchline.
 				loadline[0]=cacheIndex%cachesize;
 				loadtag[0]=alignedDistrAddr;
 			}
 
-			sem_post(&loadstartsem);
-			sem_wait(&prefetchwaitsem);
+			sem_post(&loadstartsem); //														<-|- (loadstartsem)
+			sem_wait(&prefetchwaitsem); //													-|-> (prefetchwaitsem)
 			prefetchline[0] = GLOBAL_NULL;
 			prefetchtag[0]= GLOBAL_NULL;
-			pthread_mutex_unlock(&cachemutex);
+			pthread_mutex_unlock(&cachemutex); //											<-/- (cachemutex)
 			double t2 = MPI_Wtime();
 			stats.loadtime+=t2-t1;
-			return;
+			return; //																		RETN
 		}
+		// If the loadline holds a valid cache indice, but prefetchline doesn't,
+		// then try to set the prefetchline based on the loadline indice.
 		else if(prefetchline[0] == GLOBAL_NULL && loadline[0] != GLOBAL_NULL){
 			if(loadline[0] <= startIndex && startIndex < loadline[0]+CACHELINE){
+				// Make prefetchline point to the next page than that of loadline.
 				prefetchline[0]=(startIndex+CACHELINE)%cachesize;
 				prefetchtag[0]=lineAddr+pagesize*CACHELINE;
 			}
 			else{
+				// Make prefetchline point to the previous page than that of loadline.
 				prefetchline[0]=cacheIndex%cachesize;
 				prefetchtag[0]=alignedDistrAddr;
 			}
 
-			sem_post(&prefetchstartsem);
-			sem_wait(&loadwaitsem);
+			sem_post(&prefetchstartsem); //													<-|- (prefetchstartsem)
+			sem_wait(&loadwaitsem); //														-|-> (loadwaitsem)
 			loadline[0] = GLOBAL_NULL;
 			loadtag[0]=GLOBAL_NULL;
-			pthread_mutex_unlock(&cachemutex);
+			pthread_mutex_unlock(&cachemutex); //											<-/- (cachemutex)
 			double t2 = MPI_Wtime();
 			stats.loadtime+=t2-t1;
-			return;
+			return; //																		RETN
 		}
 		else{
+			// Cacheindex of page to be loaded by loadthread1.
 			loadline[0]=startIndex%cachesize;
+			// Address of page to be loaded by loadthread1.
 			loadtag[0]=alignedDistrAddr;
-			sem_post(&loadstartsem);
+			// This issues the thread in loadcacheline() to continue.
+			sem_post(&loadstartsem); //														<-|- (loadstartsem)
 
+// This is off, don't forget to change later.
 #ifdef DUAL_LOAD
+			// Next cacheindex of page with regard to the above to be loaded by loadthread2.
 			prefetchline[0]=(startIndex+CACHELINE)%cachesize;
+			// Next address of page with regard to the above to be loaded by loadthread2.
 			prefetchtag[0]=alignedDistrAddr+CACHELINE*pagesize;
-			sem_post(&prefetchstartsem);
-			sem_wait(&loadwaitsem);
+			// This issues the thread in prefetchcacheline() to continue.
+			sem_post(&prefetchstartsem); //													<-|- (prefetchstartsem)
+			sem_wait(&loadwaitsem); //														-|-> (loadwaitsem)
 			loadline[0]=GLOBAL_NULL;
 			loadtag[0]=GLOBAL_NULL;
 #else
@@ -477,46 +617,49 @@ void handler(int sig, siginfo_t *si, void *unused){
 			prefetchtag[0]=GLOBAL_NULL;
 
 #endif
-			pthread_mutex_unlock(&cachemutex);
+			pthread_mutex_unlock(&cachemutex); // 											<-/- (cachemutex)
 			double t2 = MPI_Wtime();
 			stats.loadtime+=t2-t1;
-			return;
+			return; //																		RETN
 		}
 	}
 
+	// If the line that prefetchline holds hasn't been fetched wait till it is.
 	if(prefetchline[0] != GLOBAL_NULL){
-		sem_wait(&prefetchwaitsem);
+		sem_wait(&prefetchwaitsem); // 														-|-> (prefetchstartsem)
 		prefetchline[0] = GLOBAL_NULL;
 		prefetchtag[0]=GLOBAL_NULL;
-		pthread_mutex_unlock(&cachemutex);
+		pthread_mutex_unlock(&cachemutex); // 												<-/- (cachemutex)
 		double t2 = MPI_Wtime();
 		stats.loadtime+=t2-t1;
-		return;
+		return; //																			RETN
 
 	}
+	// If the line that loadline holds hasn't been fetched wait till it is.
 	else if(loadline[0] != GLOBAL_NULL){
-		sem_wait(&loadwaitsem);
+		sem_wait(&loadwaitsem); //															-|-> (loadwaitsem)
 		loadline[0]=GLOBAL_NULL;
 		loadtag[0] =GLOBAL_NULL;
-		pthread_mutex_unlock(&cachemutex);
+		pthread_mutex_unlock(&cachemutex); //												<-/- (cachemutex)
 		double t2 = MPI_Wtime();
 		stats.loadtime+=t2-t1;
-		return;
+		return; //																			RETN
 	}
 
 	unsigned long line = startIndex / CACHELINE;
 	line *= CACHELINE;
 
+	// If the page is in the load pagecache and is dirty.
 	if(cacheControl[line].dirty == DIRTY){
-		pthread_mutex_unlock(&cachemutex);
-		return;
+		pthread_mutex_unlock(&cachemutex); //												<-/- (cachemutex)
+		return; //																			RETN
 	}
 
-
+	// Otherwise mark the page as touched and then dirty.
 	touchedcache[line] = 1;
 	cacheControl[line].dirty = DIRTY;
 
-	sem_wait(&ibsem);
+	sem_wait(&ibsem); //																	-|-> (ibsem)
 	MPI_Win_lock(MPI_LOCK_SHARED, workrank, 0, sharerWindow);
 	unsigned long writers = globalSharers[classidx+1];
 	unsigned long sharers = globalSharers[classidx];
@@ -564,36 +707,152 @@ void handler(int sig, siginfo_t *si, void *unused){
 			}
 		}
 	}
-	sem_post(&ibsem);
+	sem_post(&ibsem); //																	<-|- (ibsem)
 	unsigned char * real = (unsigned char *)(localAlignedAddr);
 	unsigned char * copy = (unsigned char *)(pagecopy + line*pagesize);
 	memcpy(copy,real,CACHELINE*pagesize);
 	addToWriteBuffer(startIndex);
 	mprotect(localAlignedAddr, pagesize*CACHELINE,PROT_WRITE|PROT_READ);
-	pthread_mutex_unlock(&cachemutex);
+	pthread_mutex_unlock(&cachemutex); //													<-/- (cachemutex)
 	double t2 = MPI_Wtime();
 	stats.storetime += t2-t1;
-	return;
+	return; //																				RETN
 }
 
 
 unsigned long getHomenode(unsigned long addr){
+#if ARGO_MEM_ALLOC_POLICY == 0
 	unsigned long homenode = addr/size_of_chunk;
 	if(homenode >=(unsigned long)numtasks){
 		exit(EXIT_FAILURE);
 	}
 	return homenode;
+#elif ARGO_MEM_ALLOC_POLICY == 1
+	unsigned long index = 2*addr/pagesize;
+	unsigned long homenode = globalOwners[index];
+
+	int n;
+	for(n = 0; n < numtasks; n++)
+		if((unsigned long)(1 << n) == homenode)
+			homenode = n;
+
+	//printf("(getHomenode) Process %i, localAlignedAddr: %p, homenode: 0x%X\n", workrank, (void*)((char*)startAddr + addr), homenode);
+
+	return homenode;
+#elif ARGO_MEM_ALLOC_POLICY == 2
+	unsigned long index = 2*addr/pagesize;
+	unsigned long homenode = globalOwners[index];
+
+	return homenode;
+#endif
 }
 
 unsigned long getOffset(unsigned long addr){
+#if ARGO_MEM_ALLOC_POLICY == 0
 	//offset in local memory on remote node (homenode)
 	unsigned long offset = addr - (getHomenode(addr))*size_of_chunk;
 	if(offset >=size_of_chunk){
 		exit(EXIT_FAILURE);
 	}
 	return offset;
+#elif ARGO_MEM_ALLOC_POLICY == 1
+	unsigned long index = 2*addr/pagesize;
+	unsigned long offset = globalOwners[index+1];
+
+	//printf("(getOffset) Process %i, localAlignedAddr: %p, offset: 0x%X\n", workrank, (void*)((char*)startAddr + addr), offset);
+
+	return offset;
+#elif ARGO_MEM_ALLOC_POLICY == 2
+	unsigned long index = 2*addr/pagesize;
+	unsigned long offset = globalOwners[index+1];
+
+	return offset;
+#endif
 }
 
+#if ARGO_MEM_ALLOC_POLICY == 1
+unsigned long firstTouch(unsigned long addr) {
+	unsigned long homenode;
+	unsigned long id = 1 << getID();
+	unsigned long index = 2*addr/pagesize;
+
+	pthread_mutex_lock(&ownermutex);
+	sem_wait(&ibsem);
+
+	//printf("(pr_bef) Process: %i, localAlignedAddr: %p, [0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X]\n", workrank, (void*)((char*)startAddr + addr),
+	//		globalOwners[0], globalOwners[1], globalOwners[2], globalOwners[3], globalOwners[4], globalOwners[5],
+	//		globalOwners[6], globalOwners[7], globalOwners[8], globalOwners[9], globalOwners[10], globalOwners[11]);
+	//fflush(stdout);
+
+	/**
+	 * @brief Turned out that it was 0x200000000000 that had to be
+	 * assigned to process 0 and not to some other process. This
+	 * delay made it work because the delay for process 0 was "0",
+	 * but now this is done initially by default.
+	 */
+	// Introduce some delay for safety.
+	//volatile unsigned long i;
+	//for (i = 0; i < 10000 * workrank; i++);
+
+	// Variables for CAS.
+	unsigned long result;
+	constexpr unsigned long compare = 0;
+	
+	// Check/try to acquire ownership of the page.
+	MPI_Win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, ownerWindow);
+	// CAS to process' 0 index.
+	MPI_Compare_and_swap(&id, &compare, &result, MPI_LONG, 0, index, ownerWindow);
+	// Force local and remote completion with MPI_Win_unlock().
+	MPI_Win_unlock(0, ownerWindow);
+
+	// This process was the first one to deposit the id.
+	if (result == 0) {
+		homenode = id;
+		
+		// Mark the page in the local window.
+		MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, ownerWindow);
+		globalOwners[index] |= id; // OR operation for debugging...
+		globalOwners[index+1] |= ownerOffset; // OR operation for debugging...
+		MPI_Win_unlock(workrank, ownerWindow);
+
+		// Mark the page in the public windows.
+		int n;
+		for(n = 0; n < numtasks; n++)
+			if (n != workrank) {
+				MPI_Win_lock(MPI_LOCK_EXCLUSIVE, n, 0, ownerWindow);
+				MPI_Accumulate(&id, 1, MPI_LONG, n, index, 1, MPI_LONG, MPI_BOR, ownerWindow); // MPI_BOR operation for debugging...
+				MPI_Accumulate(&ownerOffset, 1, MPI_LONG, n, index+1, 1, MPI_LONG, MPI_BOR, ownerWindow); // MPI_BOR operation for debugging...
+				MPI_Win_unlock(n, ownerWindow);
+			}
+		
+		// Since a new page was acquired increase the homenode offset.
+		ownerOffset += pagesize;
+	} else
+		homenode = result;
+	
+	//printf("(pr_aft) Process: %i, localAlignedAddr: %p, [0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X]\n", workrank, (void*)((char*)startAddr + addr),
+	//		globalOwners[0], globalOwners[1], globalOwners[2], globalOwners[3], globalOwners[4], globalOwners[5],
+	//		globalOwners[6], globalOwners[7], globalOwners[8], globalOwners[9], globalOwners[10], globalOwners[11]);
+	//fflush(stdout);
+
+	// Abstract homenode from the id.
+	int n;
+	for(n = 0; n < numtasks; n++)
+		if((unsigned long)(1 << n) == homenode)
+			homenode = n;
+	
+	sem_post(&ibsem);
+	pthread_mutex_unlock(&ownermutex);
+	
+	return homenode;
+}
+#endif
+
+/*
+ * **************************************************************************************
+ * This function writes the oldest page in the writebuffer back to its homenode.
+ * **************************************************************************************
+ */
 void *writeloop(void * x){
 	UNUSED_PARAM(x);
 	unsigned long i;
@@ -602,14 +861,18 @@ void *writeloop(void * x){
 
 	while(1){
 
-		sem_wait(&writerstartsem);
-		sem_wait(&ibsem);
+		// Wait till the write buffer is full.
+		sem_wait(&writerstartsem); //														-|-> (writerstartsem)
+		sem_wait(&ibsem); //																-|-> (ibsem)
 
 		oldstart = writebufferstart;
 		i = oldstart;
 		idx = writebuffer[i];
 		tag = cacheControl[idx].tag;
 		writebuffer[i] = GLOBAL_NULL;
+		// If the address of the page as well as its cache indice are valid
+		// and the page is dirty, change the page permissions to read and
+		// applie the changes to its corresponding homenode.
 		if(tag != GLOBAL_NULL && idx != GLOBAL_NULL && cacheControl[idx].dirty == DIRTY){
 			mprotect((char*)startAddr+tag,CACHELINE*pagesize,PROT_READ);
 			for(i = 0; i <CACHELINE; i++){
@@ -617,6 +880,7 @@ void *writeloop(void * x){
 				cacheControl[idx+i].dirty = CLEAN;
 			}
 		}
+		// Close any windows that were opened in the above operation.
 		for(i = 0; i < (unsigned long)numtasks; i++){
 			if(barwindowsused[i] == 1){
 				MPI_Win_unlock(i, globalDataWindow[i]);
@@ -624,33 +888,50 @@ void *writeloop(void * x){
 			}
 		}
 		writebufferstart = (writebufferstart+1)%writebuffersize;
-		sem_post(&ibsem);
-		sem_post(&writerwaitsem);
+		sem_post(&ibsem); //																<-|- (ibsem)
+		sem_post(&writerwaitsem); //														<-|- (writerwaitsem)
 	}
 	return nullptr;
 }
 
+/* 
+ * **************************************************************************************
+ * This function does the work of loading a page into the pagecache.
+
+ * Initially covers some corner cases and later checks if the page is in the pagecache.
+ * If not it applies the changes of the current page that is in its position to its
+ * corresponding homenode and maps space to the pagecache for the new page. 
+ * After getting the readers and writers from the homenode it updates the globalSharers
+ * and also after finding the private owner of this page, updates its directory.
+ * The data however are fetched from the homenode of the page (its pagecache) and the 
+ * cacheControl struct is updated also.
+ * **************************************************************************************
+ */
 void * loadcacheline(void * x){
 	UNUSED_PARAM(x);
 	int i;
 	unsigned long homenode;
 	unsigned long id = 1 << getID();
 	unsigned long invid = ~id;
+
+	//printf("(loadcacheline) Process: %i, homenode: 0x%X, id: 0x%X, invid: 0x%X\n", workrank, homenode, id, invid);
+
 	while(1){
-		sem_wait(&loadstartsem);
+		// Sleep here till post is issued from the handler.
+		sem_wait(&loadstartsem); //															-|-> (loadstartsem)
+		// Check for out-of-bound memory access, size_of_all = argo_size.
 		if(loadtag[0]>=size_of_all){//Trying to access/prefetch out of memory
-			sem_post(&loadwaitsem);
-			continue;
+			sem_post(&loadwaitsem); //														<-|- (loadwaitsem)
+			continue; //																	RETN (continue here)
 		}
 		homenode = getHomenode(loadtag[0]);
 		unsigned long cacheIndex = loadline[0];
 		if(cacheIndex >= cachesize){
 			printf("idx > size   cacheIndex:%ld cachesize:%ld\n",cacheIndex,cachesize);
-			sem_post(&loadwaitsem);
-			continue;
+			sem_post(&loadwaitsem); //														<-|- (loadwaitsem)
+			continue; //																	RETN
 		}
-		sem_wait(&ibsem);
-
+		sem_wait(&ibsem); //																-|-> (ibsem)
 
 		unsigned long pageAddr = loadtag[0];
 		unsigned long blocksize = pagesize*CACHELINE;
@@ -665,30 +946,45 @@ void * loadcacheline(void * x){
 			end = cachesize;
 		}
 
+		//printf("(loadcacheline) Process: %i, pageAddr: 0x%X, lineAddr: 0x%X, startidx: 0x%X, end: 0x%X\n", workrank, pageAddr, lineAddr, startidx, end);
+
 		argo_byte tmpstate = cacheControl[startidx].state;
 		unsigned long tmptag = cacheControl[startidx].tag;
 
+		//printf("(loadcacheline) Process: %i, tmpstate: 0x%X, tmptag: 0x%X\n", workrank, tmpstate, tmptag);
+
+		// If the page is in the pagecache and its state is not invalid don't fetch anything.
 		if(tmptag == lineAddr && tmpstate != INVALID){
-			sem_post(&ibsem);
-			sem_post(&loadwaitsem);
-			continue;
+			sem_post(&ibsem); //															<-|- (ibsem)
+			sem_post(&loadwaitsem); //														<-|- (loadwaitsem)
+			continue; //																	RETN
 		}
 
 
+		// The actual address in the global address space.
 		void * lineptr = (char*)startAddr + lineAddr;
 
-		if(cacheControl[startidx].tag  != lineAddr){
-			if(cacheControl[startidx].tag  != lineAddr){
+		// Probably a cacheline (a page since CACHELINE 1L) is replaced if the tag
+		// in the corresponding location in the cache isn't equal to its lineAddr.
+		if(cacheControl[startidx].tag  != lineAddr){ // QUESTION: What is that comparison even supposed to mean?
+			if(cacheControl[startidx].tag  != lineAddr){ // QUESTION: Why two comparisons here?
 				if(pthread_mutex_trylock(&wbmutex) != 0){
-					sem_post(&ibsem);
-					pthread_mutex_lock(&wbmutex);
-					sem_wait(&ibsem);
+					sem_post(&ibsem); //													<-|- (ibsem)
+					// Locking the write buffer and protecting from possible
+					// simultaneous downgrade of pages to the homenodes.
+					pthread_mutex_lock(&wbmutex); //										-/-> (wbmutex)
+					sem_wait(&ibsem); //													-|-> (ibsem)
 				}
 
+				// Getting the actual address of the page.
 				void * tmpptr2 = (char*)startAddr + cacheControl[startidx].tag;
+				// Check again if the address is in the boundaries of the global address space
+				// and if the tag in the pagecache is not the same with the address given to the function.
 				if(cacheControl[startidx].tag != GLOBAL_NULL && cacheControl[startidx].tag  != lineAddr){
+					// If that's the case, check if that page in the pagecache is dirty.
 					argo_byte dirty = cacheControl[startidx].dirty;
 					if(dirty == DIRTY){
+						// Change the protection for this page and apply the changes to the homenode.
 						mprotect(tmpptr2,blocksize,PROT_READ);
 						int j;
 						for(j=0; j < CACHELINE; j++){
@@ -696,6 +992,7 @@ void * loadcacheline(void * x){
 						}
 					}
 
+					// Close the windows that were opened in storepageDIFF().
 					for(i = 0; i < numtasks; i++){
 						if(barwindowsused[i] == 1){
 							MPI_Win_unlock(i, globalDataWindow[i]);
@@ -703,14 +1000,18 @@ void * loadcacheline(void * x){
 						}
 					}
 
+					// Change in that location of the page that it was just downgraded
+					// its state to invalid and also the tag to the address given to the function.
 					cacheControl[startidx].state = INVALID;
 					cacheControl[startidx].tag = lineAddr;
 
+					// The state of the new page to be loaded.
 					cacheControl[startidx].dirty=CLEAN;
+					// Map page to the pagecache with no access permissions.
 					vm::map_memory(lineptr, blocksize, pagesize*startidx, PROT_NONE);
 					mprotect(tmpptr2,blocksize,PROT_NONE);
 				}
-				pthread_mutex_unlock(&wbmutex);
+				pthread_mutex_unlock(&wbmutex); //											<-/- (wbmutex)
 			}
 		}
 
@@ -721,43 +1022,56 @@ void * loadcacheline(void * x){
 		unsigned long tempsharer = 0;
 		unsigned long tempwriter = 0;
 
+		// Check if this process was a previous sharer of this page.
 		MPI_Win_lock(MPI_LOCK_SHARED, workrank, 0, sharerWindow);
 		unsigned long prevsharer = (globalSharers[classidx])&id;
 		MPI_Win_unlock(workrank, sharerWindow);
 		int n;
 		homenode = getHomenode(lineAddr);
 
+		//printf("(prevsharer?) Process: %i, prevsharer: 0x%X, homenode: 0x%X, lineAddr: 0x%X\n", workrank, prevsharer, homenode, lineAddr);
+
 		if(prevsharer==0 ){ //if there is strictly less than two 'stable' sharers
 			MPI_Win_lock(MPI_LOCK_SHARED, homenode, 0, sharerWindow);
+			// Getting the current sharers and writers and updating the homenode of the
+			// page by depositing the process id to the "readers" part (classidx).
 			MPI_Get_accumulate(&id, 1, MPI_LONG, &tempsharer, 1, MPI_LONG,
 				homenode, classidx, 1, MPI_LONG, MPI_BOR, sharerWindow);
 			MPI_Get(&tempwriter, 1,MPI_LONG,homenode,classidx+1,1,MPI_LONG,sharerWindow);
 			MPI_Win_unlock(homenode, sharerWindow);
 		}
 
+		// Updating the local globalSharers (readers & writers) with
+		// the values fetched from above.
 		MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, sharerWindow);
 		globalSharers[classidx] |= tempsharer;
 		globalSharers[classidx+1] |= tempwriter;
 		MPI_Win_unlock(workrank, sharerWindow);
 
 		unsigned long offset = getOffset(lineAddr);
+		// If there is a private sharer of this page.
 		if(isPowerOf2((tempsharer)&invid) && tempsharer != id && prevsharer == 0){ //Other private. but may not have loaded page yet.
 			unsigned long ownid = tempsharer&invid; // remove own bit
 			unsigned long owner = invalid_node; // initialize to failsafe value
+			// Get its rank.
 			for(n=0; n<numtasks; n++) {
 				if(1ul<<n==ownid) {
 					owner = n; //just get rank...
 					break;
 				}
 			}
+			// If owner actually holds its rank and not some garbage value
+			// (garbage value would mean that he actually didn't load the page).
 			if(owner != invalid_node) {
 				MPI_Win_lock(MPI_LOCK_EXCLUSIVE, owner, 0, sharerWindow);
+				// Deposit the process id to the "readers" part (classidx) of the owner's directory.
 				MPI_Accumulate(&id, 1, MPI_LONG, owner, classidx, 1, MPI_LONG, MPI_BOR, sharerWindow);
 				MPI_Win_unlock(owner, sharerWindow);
 			}
 
 		}
 
+		// Actually getting the page data from the relevant homenode.
 		MPI_Win_lock(MPI_LOCK_SHARED, homenode , 0, globalDataWindow[homenode]);
 		MPI_Get(&cacheData[startidx*pagesize],
 						1,
@@ -766,24 +1080,34 @@ void * loadcacheline(void * x){
 						offset, 1,cacheblock,globalDataWindow[homenode]);
 		MPI_Win_unlock(homenode, globalDataWindow[homenode]);
 
+		// Map the page to the pagecache if not done before, with read permissions.
 		if(cacheControl[startidx].tag == GLOBAL_NULL){
 			vm::map_memory(lineptr, blocksize, pagesize*startidx, PROT_READ);
 			cacheControl[startidx].tag = lineAddr;
 		}
+		// If mapped before, just change the permissions.
 		else{
 			mprotect(lineptr,pagesize*CACHELINE,PROT_READ);
 		}
+		// Change the state of the page to touched
+		// and its state from invalid to be valid.
 		touchedcache[startidx] = 1;
 		cacheControl[startidx].state = VALID;
 
+		// This page is of course clean.
 		cacheControl[startidx].dirty=CLEAN;
-		sem_post(&loadwaitsem);
-		sem_post(&ibsem);
+		sem_post(&loadwaitsem); //															<-|- (loadwaitsem)
+		sem_post(&ibsem); //																<-|- (ibsem)
 
 	}
 	return nullptr;
 }
 
+/* 
+ * **************************************************************************************
+ * This function is exactly the same as loadcacheline().
+ * **************************************************************************************
+ */
 void * prefetchcacheline(void * x){
 	UNUSED_PARAM(x);
 	int i;
@@ -1042,6 +1366,8 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	cachesize /= CACHELINE;
 	cachesize *= CACHELINE;
 
+	//printf("argo_size: %lu, cache_size: %lu, cachesize (in pages): %lu\n", argo_size, cache_size, cachesize);
+
 	classificationSize = 2*cachesize; // Could be smaller ?
 	writebuffersize = WRITE_BUFFER_PAGES/CACHELINE;
 	writebuffer = (unsigned long *) malloc(sizeof(unsigned long)*writebuffersize);
@@ -1106,8 +1432,10 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	cacheControlSize *= pagesize;
 	gwritersize *= pagesize;
 
+	// This is the offset to point to globalData.
 	cacheoffset = pagesize*cachesize+cacheControlSize;
 
+	// Node-local allocations.
 	globalData = static_cast<char*>(vm::allocate_mappable(pagesize, size_of_chunk));
 	cacheData = static_cast<char*>(vm::allocate_mappable(pagesize, cachesize*pagesize));
 	cacheControl = static_cast<control_data*>(vm::allocate_mappable(pagesize, cacheControlSize));
@@ -1118,6 +1446,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 		exit(EXIT_FAILURE);
 	}
 
+	// Node-local allocations.
 	lockbuffer = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, pagesize));
 	pagecopy = static_cast<char*>(vm::allocate_mappable(pagesize, cachesize*pagesize));
 	globalSharers = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, gwritersize));
@@ -1163,12 +1492,10 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	globalDataWindow = (MPI_Win*)malloc(sizeof(MPI_Win)*numtasks);
 
 	for(i = 0; i < numtasks; i++){
- 		MPI_Win_create(globalData, size_of_chunk*sizeof(argo_byte), 1,
-									 MPI_INFO_NULL, MPI_COMM_WORLD, &globalDataWindow[i]);
+ 		MPI_Win_create(globalData, size_of_chunk*sizeof(argo_byte), 1, MPI_INFO_NULL, MPI_COMM_WORLD, &globalDataWindow[i]);
 	}
 
-	MPI_Win_create(globalSharers, gwritersize, sizeof(unsigned long),
-								 MPI_INFO_NULL, MPI_COMM_WORLD, &sharerWindow);
+	MPI_Win_create(globalSharers, gwritersize, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &sharerWindow);
 	MPI_Win_create(lockbuffer, pagesize, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &lockWindow);
 
 	memset(pagecopy, 0, cachesize*pagesize);
@@ -1178,6 +1505,51 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	memset(lockbuffer, 0, pagesize);
 	memset(globalSharers, 0, gwritersize);
 	memset(cacheControl, 0, cachesize*sizeof(control_data));
+
+#if ARGO_MEM_ALLOC_POLICY == 1 || \
+	ARGO_MEM_ALLOC_POLICY == 2
+	ownerOffset = 0;
+
+	ownerSize = 2*argo_size/pagesize;
+	unsigned long ownerSizeBytes = ownerSize*sizeof(long);
+
+	ownerSizeBytes /= pagesize;
+	ownerSizeBytes += 1;
+	ownerSizeBytes *= pagesize;
+
+	globalOwners = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, ownerSizeBytes));
+
+	current_offset += pagesize;
+	tmpcache=globalOwners;
+	vm::map_memory(tmpcache, ownerSizeBytes, current_offset, PROT_READ|PROT_WRITE);
+
+	MPI_Win_create(globalOwners, ownerSizeBytes, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &ownerWindow);
+
+	memset(globalOwners, 0, ownerSizeBytes);
+
+	printf("(init) Process: %i, ownerSize: %lu, ownerSizeBytes: %lu\n", workrank, ownerSize, ownerSizeBytes);
+#endif
+
+	/**
+	 * @brief In the RMA unified model, public and private copies are identical and updates via put or 
+	 * accumulate calls are eventually observed by load operations without additional RMA calls. A store
+	 * access to a window is eventually visible to remote get or accumulate calls without additional RMA
+	 * calls. These stronger semantics of the RMA unified model allow the user to omit some synchronization
+	 * calls and potentially improve performance.
+	 * 
+	 * or from another source...
+	 * 
+	 * Under the unified memory model, the buffer in process space is indeed the window memory, or at least
+	 * they are kept coherent. This means that after completion of an epoch you can read the window contents
+	 * from the buffer. To get this, the window needs to be created with MPI_Win_allocate_shared.
+	 */
+	//int flag, *memory_model;
+	//MPI_Win_get_attr(ownerWindow, MPI_WIN_MODEL, &memory_model, &flag);
+
+	//if (*memory_model == MPI_WIN_SEPARATE)
+	//	printf("RMA Seperate Memory model\n");
+	//else if (*memory_model == MPI_WIN_UNIFIED)
+	//	printf("RMA Unified Memory model\n");
 
 	for(j=0; j<cachesize; j++){
 		cacheControl[j].tag = GLOBAL_NULL;
@@ -1206,7 +1578,7 @@ void argo_finalize(){
 
 	for(i=0; i <numtasks;i++){
 		if(i==workrank){
-			printStatistics();
+			//printStatistics();
 		}
 	}
 
@@ -1215,6 +1587,10 @@ void argo_finalize(){
 		MPI_Win_free(&globalDataWindow[i]);
 	}
 	MPI_Win_free(&sharerWindow);
+#if ARGO_MEM_ALLOC_POLICY == 1 || \
+	ARGO_MEM_ALLOC_POLICY == 2
+	MPI_Win_free(&ownerWindow);
+#endif
 	MPI_Win_free(&lockWindow);
 	MPI_Comm_free(&workcomm);
 	MPI_Finalize();
@@ -1314,6 +1690,31 @@ void argo_reset_coherence(int n){
 		globalSharers[j] = 0;
 	}
 	MPI_Win_unlock(workrank, sharerWindow);
+#if ARGO_MEM_ALLOC_POLICY == 1
+	MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, ownerWindow);
+	globalOwners[0] = 0x1;
+	globalOwners[1] = 0x0;
+	for(j = 2; j < ownerSize; j++)
+		globalOwners[j] = 0;
+	MPI_Win_unlock(workrank, ownerWindow);
+	ownerOffset = (workrank == 0) ? pagesize : 0;
+#elif ARGO_MEM_ALLOC_POLICY == 2
+	/**
+	 * @note If the ownerSize is big (e.g. for 10GB argo_size),
+	 * then after some point we have overflows (unsigned long long?).
+	 */
+	unsigned long id = 0x0, offset = 0x0;
+	MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, ownerWindow);
+	globalOwners[0] = 0x0;
+	globalOwners[1] = 0x0;
+	for(j = 2; j < ownerSize; j += 2) {
+		globalOwners[j] = id;
+		globalOwners[j+1] = (id != 0) ? offset : offset + pagesize;
+		id = (id + 1) % numtasks;
+		offset += (id == 0) ? pagesize : 0;
+	}
+	MPI_Win_unlock(workrank, ownerWindow);
+#endif
 	sem_post(&ibsem);
 	swdsm_argo_barrier(n);
 	mprotect(startAddr,size_of_all,PROT_NONE);
@@ -1366,39 +1767,63 @@ void clearStatistics(){
 	stats.locks = 0;
 }
 
+/* 
+ * **************************************************************************************
+ * This function basically applies the local changes of a page to its relevant homenode.
+ * **************************************************************************************
+ */
 void storepageDIFF(unsigned long index, unsigned long addr){
 	unsigned int i,j;
 	int cnt = 0;
+	
+	// Getting homenode of addr.
 	unsigned long homenode = getHomenode(addr);
+	// Getting offset in local memory of remote node.
 	unsigned long offset = getOffset(addr);
 
+	// Corresponding address in copycache.
 	char * copy = (char *)(pagecopy + index*pagesize);
+	// Actual address in the global address space.
 	char * real = (char *)startAddr+addr;
 	size_t drf_unit = sizeof(char);
 
+	//printf("(downgrade) Process: %i, Cache index: %lu, Page addr: %p (homenode %lu)\n", rank, index, (void *)real, homenode);
+
+	// If Window is not opened already with the page's homenode, open one.
 	if(barwindowsused[homenode] == 0){
 		MPI_Win_lock(MPI_LOCK_EXCLUSIVE, homenode, 0, globalDataWindow[homenode]);
 		barwindowsused[homenode] = 1;
 	}
 
+	// Store of a cache line is performed at the byte level.
 	for(i = 0; i < pagesize; i+=drf_unit){
 		int branchval;
+		// Compare bytes from real and copy cache.
 		for(j=i; j < i+drf_unit; j++){
+			// branchval - real-copy same (0).
+			// branchval - real-copy diff (1).
 			branchval = real[j] != copy[j];
+			// If real-copy diff break.
 			if(branchval != 0){
 				break;
 			}
 		}
+		// If real-copy diff.
 		if(branchval != 0){
 			cnt+=drf_unit;
 		}
+		// If real-copy same.
 		else{
 			if(cnt > 0){
+				// Essentially what is being done is count dirty bytes till
+				// the first encounter of the same byte between real and copy,
+				// which in that case the dirty bytes so far are put into homenode.
 				MPI_Put(&real[i-cnt], cnt, MPI_BYTE, homenode, offset+(i-cnt), cnt, MPI_BYTE, globalDataWindow[homenode]);
 				cnt = 0;
 			}
 		}
 	}
+	// This is for sending the rest of the bytes that were left from the above loop.
 	if(cnt > 0){
 		MPI_Put(&real[i-cnt], cnt, MPI_BYTE, homenode, offset+(i-cnt), cnt, MPI_BYTE, globalDataWindow[homenode]);
 	}
