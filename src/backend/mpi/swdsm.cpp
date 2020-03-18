@@ -728,7 +728,7 @@ unsigned long getHomenode(unsigned long addr){
 	}
 	return homenode;
 #elif ARGO_MEM_ALLOC_POLICY == 1
-	unsigned long index = 2*addr/pagesize;
+	unsigned long index = 2*(addr/pagesize);
 	unsigned long homenode = globalOwners[index];
 
 	int n;
@@ -740,7 +740,7 @@ unsigned long getHomenode(unsigned long addr){
 
 	return homenode;
 #elif ARGO_MEM_ALLOC_POLICY == 2
-	unsigned long index = 2*addr/pagesize;
+	unsigned long index = 2*(addr/pagesize);
 	unsigned long homenode = globalOwners[index];
 
 	return homenode;
@@ -756,14 +756,14 @@ unsigned long getOffset(unsigned long addr){
 	}
 	return offset;
 #elif ARGO_MEM_ALLOC_POLICY == 1
-	unsigned long index = 2*addr/pagesize;
+	unsigned long index = 2*(addr/pagesize);
 	unsigned long offset = globalOwners[index+1];
 
 	//printf("(getOffset) Process %i, localAlignedAddr: %p, offset: 0x%X\n", workrank, (void*)((char*)startAddr + addr), offset);
 
 	return offset;
 #elif ARGO_MEM_ALLOC_POLICY == 2
-	unsigned long index = 2*addr/pagesize;
+	unsigned long index = 2*(addr/pagesize);
 	unsigned long offset = globalOwners[index+1];
 
 	return offset;
@@ -774,7 +774,7 @@ unsigned long getOffset(unsigned long addr){
 unsigned long firstTouch(unsigned long addr) {
 	unsigned long homenode;
 	unsigned long id = 1 << getID();
-	unsigned long index = 2*addr/pagesize;
+	unsigned long index = 2*(addr/pagesize);
 
 	pthread_mutex_lock(&ownermutex);
 	sem_wait(&ibsem);
@@ -1421,7 +1421,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	sig::signal_handler<SIGSEGV>::install_argo_handler(&handler);
 
 	unsigned long cacheControlSize = sizeof(control_data)*cachesize;
-	unsigned long gwritersize = classificationSize*sizeof(long);
+	unsigned long gwritersize = classificationSize*sizeof(unsigned long);
 
 	cacheControlSize /= pagesize;
 	gwritersize /= pagesize;
@@ -1510,8 +1510,8 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	ARGO_MEM_ALLOC_POLICY == 2
 	ownerOffset = 0;
 
-	ownerSize = 2*argo_size/pagesize;
-	unsigned long ownerSizeBytes = ownerSize*sizeof(long);
+	ownerSize = 2*(argo_size/pagesize);
+	unsigned long ownerSizeBytes = ownerSize*sizeof(unsigned long);
 
 	ownerSizeBytes /= pagesize;
 	ownerSizeBytes += 1;
@@ -1527,7 +1527,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 
 	memset(globalOwners, 0, ownerSizeBytes);
 
-	printf("(init) Process: %i, ownerSize: %lu, ownerSizeBytes: %lu\n", workrank, ownerSize, ownerSizeBytes);
+	//printf("(init) Process: %i, ownerSize: %lu, ownerSizeBytes: %lu\n", workrank, ownerSize, ownerSizeBytes);
 #endif
 
 	/**
