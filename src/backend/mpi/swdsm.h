@@ -62,7 +62,16 @@
 #define UNUSED_PARAM(x) (void)(x)
 
 /** @brief 1 for activating two memory requests in parallel, 0 for disabling*/
-#define DUAL_LOAD 1
+#define DUAL_LOAD 0
+
+/**
+ * @brief Compiler directive for selecting the memory allocation policy.
+ * 0 : Default memory allocation policy.
+ * 1 : First-touch memory allocation policy.
+ * 2 : Round-Robin memory allocation policy.
+ * 3 : ...
+ */
+#define ARGO_MEM_ALLOC_POLICY 1
 
 /** @brief Wrapper for unsigned char - basically a byte */
 typedef unsigned char argo_byte;
@@ -332,5 +341,15 @@ unsigned long getOffset(unsigned long addr);
  * @return index for sharer vector for the page
  */
 inline unsigned long get_classification_index(uint64_t addr);
+
+#if ARGO_MEM_ALLOC_POLICY == 1
+/**
+ * @brief Gives ownership of a page to the process that first touched it
+ * @param addr Address in the global address space
+ * @return the homenode that is the owner of addr
+ */
+void firstTouch(unsigned long addr);
+#endif
+
 #endif /* argo_swdsm_h */
 
