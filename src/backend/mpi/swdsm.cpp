@@ -399,6 +399,10 @@ void handler(int sig, siginfo_t *si, void *unused){
 	// Get index of the page in the sharer vector (e.g. for 0x3000 is 0x6).
 	unsigned long classidx = get_classification_index(lineAddr);
 
+#if ARGO_MEM_ALLOC_POLICY == 1
+	firstTouch(lineAddr);
+#endif
+
 	//printf("(handler) Process: %i, distrAddr: 0x%X, alignedDistrAddr: 0x%X, remCACHELINE: 0x%X, lineAddr: 0x%X, classidx: 0x%X\n", rank, distrAddr, alignedDistrAddr, remCACHELINE, lineAddr, classidx);
  
 	// Pointer to the actual address of the page in the global address space (e.g. 0x200000003000).
@@ -412,13 +416,7 @@ void handler(int sig, siginfo_t *si, void *unused){
 	//printf("(handler) Process: %i, localAlignedAddr: %p, cacheIndex: 0x%X, alignedDistrAddr: 0x%X\n", rank, (void *)localAlignedAddr, cacheIndex, alignedDistrAddr);
 
 	// Get the homenode of the address.
-#if ARGO_MEM_ALLOC_POLICY == 0
 	unsigned long homenode = getHomenode(lineAddr);
-#elif ARGO_MEM_ALLOC_POLICY == 1
-	unsigned long homenode = firstTouch(lineAddr);
-#elif ARGO_MEM_ALLOC_POLICY == 2
-	unsigned long homenode = getHomenode(lineAddr);
-#endif
 	// Offset of the address from the start address of its homenode.
 	unsigned long offset = getOffset(lineAddr);
 	// Shift by process id (e.g. for proc 0 is id = 0x1, for proc 1 is id = 0x2).
@@ -474,7 +472,7 @@ void handler(int sig, siginfo_t *si, void *unused){
 					/* update remote private holder to shared */
 					MPI_Win_lock(MPI_LOCK_EXCLUSIVE, owner, 0, sharerWindow);
 					// (MPI_BOR = Bitwise OR)
-					// Deposit the process id to the "readers" part (classidx) of the owner's directory. QUESTION: To the directory or to the pagecache?
+					// Deposit the process id to the "readers" part (classidx) of the owner's directory.
 					MPI_Accumulate(&id, 1, MPI_LONG, owner, classidx,1,MPI_LONG,MPI_BOR,sharerWindow);
 					MPI_Win_unlock(owner, sharerWindow);
 				}
@@ -506,7 +504,7 @@ void handler(int sig, siginfo_t *si, void *unused){
 						break;
 					}
 				}
-				// Deposit the process id to the "writers" part (classidx+1) of the owner's directory. QUESTION: To the directory or to the pagecache?
+				// Deposit the process id to the "writers" part (classidx+1) of the owner's directory.
 				MPI_Win_lock(MPI_LOCK_EXCLUSIVE, owner, 0, sharerWindow);
 				MPI_Accumulate(&id, 1, MPI_LONG, owner, classidx+1,1,MPI_LONG,MPI_BOR,sharerWindow);
 				MPI_Win_unlock(owner, sharerWindow);
@@ -520,7 +518,7 @@ void handler(int sig, siginfo_t *si, void *unused){
 				for(n=0; n<numtasks; n++){
 					if(n != workrank && ((1<<n)&sharers) != 0){
 						MPI_Win_lock(MPI_LOCK_EXCLUSIVE, n, 0, sharerWindow);
-						// Deposit the process id to the "writers" part (classidx+1) of the owner's directory. QUESTION: To the directory or to the pagecache?
+						// Deposit the process id to the "writers" part (classidx+1) of the owner's directory.
 						MPI_Accumulate(&id, 1, MPI_LONG, n, classidx+1,1,MPI_LONG,MPI_BOR,sharerWindow);
 						MPI_Win_unlock(n, sharerWindow);
 					}
@@ -721,58 +719,44 @@ void handler(int sig, siginfo_t *si, void *unused){
 
 
 unsigned long getHomenode(unsigned long addr){
-#if ARGO_MEM_ALLOC_POLICY == 0
+#if   ARGO_MEM_ALLOC_POLICY == 0
 	unsigned long homenode = addr/size_of_chunk;
 	if(homenode >=(unsigned long)numtasks){
 		exit(EXIT_FAILURE);
 	}
 	return homenode;
-#elif ARGO_MEM_ALLOC_POLICY == 1
+#elif ARGO_MEM_ALLOC_POLICY == 1 || \
+	  ARGO_MEM_ALLOC_POLICY == 2
 	unsigned long index = 2*(addr/pagesize);
 	unsigned long homenode = globalOwners[index];
-
-	int n;
-	for(n = 0; n < numtasks; n++)
-		if((unsigned long)(1 << n) == homenode)
-			homenode = n;
-
-	//printf("(getHomenode) Process %i, localAlignedAddr: %p, homenode: 0x%X\n", workrank, (void*)((char*)startAddr + addr), homenode);
-
-	return homenode;
-#elif ARGO_MEM_ALLOC_POLICY == 2
-	unsigned long index = 2*(addr/pagesize);
-	unsigned long homenode = globalOwners[index];
-
+	if(homenode >=(unsigned long)numtasks){
+		exit(EXIT_FAILURE);
+	}
 	return homenode;
 #endif
 }
 
 unsigned long getOffset(unsigned long addr){
-#if ARGO_MEM_ALLOC_POLICY == 0
+#if   ARGO_MEM_ALLOC_POLICY == 0
 	//offset in local memory on remote node (homenode)
 	unsigned long offset = addr - (getHomenode(addr))*size_of_chunk;
 	if(offset >=size_of_chunk){
 		exit(EXIT_FAILURE);
 	}
 	return offset;
-#elif ARGO_MEM_ALLOC_POLICY == 1
+#elif ARGO_MEM_ALLOC_POLICY == 1 || \
+	  ARGO_MEM_ALLOC_POLICY == 2
 	unsigned long index = 2*(addr/pagesize);
 	unsigned long offset = globalOwners[index+1];
-
-	//printf("(getOffset) Process %i, localAlignedAddr: %p, offset: 0x%X\n", workrank, (void*)((char*)startAddr + addr), offset);
-
-	return offset;
-#elif ARGO_MEM_ALLOC_POLICY == 2
-	unsigned long index = 2*(addr/pagesize);
-	unsigned long offset = globalOwners[index+1];
-
+	if(offset >=size_of_chunk){
+		exit(EXIT_FAILURE);
+	}
 	return offset;
 #endif
 }
 
-#if ARGO_MEM_ALLOC_POLICY == 1
-unsigned long firstTouch(unsigned long addr) {
-	unsigned long homenode;
+#if   ARGO_MEM_ALLOC_POLICY == 1
+void firstTouch(unsigned long addr){
 	unsigned long id = 1 << getID();
 	unsigned long index = 2*(addr/pagesize);
 
@@ -783,16 +767,6 @@ unsigned long firstTouch(unsigned long addr) {
 	//		globalOwners[0], globalOwners[1], globalOwners[2], globalOwners[3], globalOwners[4], globalOwners[5],
 	//		globalOwners[6], globalOwners[7], globalOwners[8], globalOwners[9], globalOwners[10], globalOwners[11]);
 	//fflush(stdout);
-
-	/**
-	 * @brief Turned out that it was 0x200000000000 that had to be
-	 * assigned to process 0 and not to some other process. This
-	 * delay made it work because the delay for process 0 was "0",
-	 * but now this is done initially by default.
-	 */
-	// Introduce some delay for safety.
-	//volatile unsigned long i;
-	//for (i = 0; i < 10000 * workrank; i++);
 
 	// Variables for CAS.
 	unsigned long result;
@@ -806,9 +780,7 @@ unsigned long firstTouch(unsigned long addr) {
 	MPI_Win_unlock(0, ownerWindow);
 
 	// This process was the first one to deposit the id.
-	if (result == 0) {
-		homenode = id;
-		
+	if (result == 0) {	
 		// Mark the page in the local window.
 		MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, ownerWindow);
 		globalOwners[index] |= id; // OR operation for debugging...
@@ -827,24 +799,15 @@ unsigned long firstTouch(unsigned long addr) {
 		
 		// Since a new page was acquired increase the homenode offset.
 		ownerOffset += pagesize;
-	} else
-		homenode = result;
+	}
 	
 	//printf("(pr_aft) Process: %i, localAlignedAddr: %p, [0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X]\n", workrank, (void*)((char*)startAddr + addr),
 	//		globalOwners[0], globalOwners[1], globalOwners[2], globalOwners[3], globalOwners[4], globalOwners[5],
 	//		globalOwners[6], globalOwners[7], globalOwners[8], globalOwners[9], globalOwners[10], globalOwners[11]);
 	//fflush(stdout);
-
-	// Abstract homenode from the id.
-	int n;
-	for(n = 0; n < numtasks; n++)
-		if((unsigned long)(1 << n) == homenode)
-			homenode = n;
 	
 	sem_post(&ibsem);
 	pthread_mutex_unlock(&ownermutex);
-	
-	return homenode;
 }
 #endif
 
@@ -1378,6 +1341,11 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	writebufferstart = 0;
 	writebufferend = 0;
 
+#if ARGO_MEM_ALLOC_POLICY == 1 || \
+	ARGO_MEM_ALLOC_POLICY == 2
+	ownerOffset = 0;
+#endif
+
 	barwindowsused = (char *)malloc(numtasks*sizeof(char));
 	for(i = 0; i < numtasks; i++){
 		barwindowsused[i] = 0;
@@ -1423,6 +1391,21 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	unsigned long cacheControlSize = sizeof(control_data)*cachesize;
 	unsigned long gwritersize = classificationSize*sizeof(unsigned long);
 
+#if ARGO_MEM_ALLOC_POLICY == 1 || \
+	ARGO_MEM_ALLOC_POLICY == 2
+	ownerSize  = argo_size;
+	ownerSize += pagesize*CACHELINE;
+	ownerSize /= pagesize;
+	ownerSize /= CACHELINE;
+	ownerSize *= CACHELINE;
+	ownerSize *= 2;
+	unsigned long ownerSizeBytes = ownerSize*sizeof(unsigned long);
+
+	ownerSizeBytes /= pagesize;
+	ownerSizeBytes += 1;
+	ownerSizeBytes *= pagesize;
+#endif
+
 	cacheControlSize /= pagesize;
 	gwritersize /= pagesize;
 
@@ -1451,6 +1434,11 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	pagecopy = static_cast<char*>(vm::allocate_mappable(pagesize, cachesize*pagesize));
 	globalSharers = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, gwritersize));
 
+#if ARGO_MEM_ALLOC_POLICY == 1 || \
+	ARGO_MEM_ALLOC_POLICY == 2
+	globalOwners = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, ownerSizeBytes));
+#endif
+
 	char processor_name[MPI_MAX_PROCESSOR_NAME];
 	int name_len;
 	MPI_Get_processor_name(processor_name, &name_len);
@@ -1477,6 +1465,13 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	tmpcache=lockbuffer;
 	vm::map_memory(tmpcache, pagesize, current_offset, PROT_READ|PROT_WRITE);
 
+#if ARGO_MEM_ALLOC_POLICY == 1 || \
+	ARGO_MEM_ALLOC_POLICY == 2
+	current_offset += pagesize;
+	tmpcache=globalOwners;
+	vm::map_memory(tmpcache, ownerSizeBytes, current_offset, PROT_READ|PROT_WRITE);
+#endif
+
 	sem_init(&loadwaitsem,0,0);
 	sem_init(&loadstartsem,0,0);
 	sem_init(&prefetchstartsem,0,0);
@@ -1498,6 +1493,11 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	MPI_Win_create(globalSharers, gwritersize, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &sharerWindow);
 	MPI_Win_create(lockbuffer, pagesize, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &lockWindow);
 
+#if ARGO_MEM_ALLOC_POLICY == 1 || \
+	ARGO_MEM_ALLOC_POLICY == 2
+	MPI_Win_create(globalOwners, ownerSizeBytes, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &ownerWindow);
+#endif
+
 	memset(pagecopy, 0, cachesize*pagesize);
 	memset(touchedcache, 0, cachesize);
 	memset(globalData, 0, size_of_chunk*sizeof(argo_byte));
@@ -1508,27 +1508,14 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 
 #if ARGO_MEM_ALLOC_POLICY == 1 || \
 	ARGO_MEM_ALLOC_POLICY == 2
-	ownerOffset = 0;
-
-	ownerSize = 2*(argo_size/pagesize);
-	unsigned long ownerSizeBytes = ownerSize*sizeof(unsigned long);
-
-	ownerSizeBytes /= pagesize;
-	ownerSizeBytes += 1;
-	ownerSizeBytes *= pagesize;
-
-	globalOwners = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, ownerSizeBytes));
-
-	current_offset += pagesize;
-	tmpcache=globalOwners;
-	vm::map_memory(tmpcache, ownerSizeBytes, current_offset, PROT_READ|PROT_WRITE);
-
-	MPI_Win_create(globalOwners, ownerSizeBytes, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &ownerWindow);
-
 	memset(globalOwners, 0, ownerSizeBytes);
-
-	//printf("(init) Process: %i, ownerSize: %lu, ownerSizeBytes: %lu\n", workrank, ownerSize, ownerSizeBytes);
 #endif
+
+	for(j=0; j<cachesize; j++){
+		cacheControl[j].tag = GLOBAL_NULL;
+		cacheControl[j].state = INVALID;
+		cacheControl[j].dirty = CLEAN;
+	}
 
 	/**
 	 * @brief In the RMA unified model, public and private copies are identical and updates via put or 
@@ -1550,12 +1537,6 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	//	printf("RMA Seperate Memory model\n");
 	//else if (*memory_model == MPI_WIN_UNIFIED)
 	//	printf("RMA Unified Memory model\n");
-
-	for(j=0; j<cachesize; j++){
-		cacheControl[j].tag = GLOBAL_NULL;
-		cacheControl[j].state = INVALID;
-		cacheControl[j].dirty = CLEAN;
-	}
 
 	pthread_create(&loadthread1,NULL,&loadcacheline,NULL);
 	pthread_create(&loadthread2,NULL,&prefetchcacheline,(void*)NULL);
@@ -1690,7 +1671,8 @@ void argo_reset_coherence(int n){
 		globalSharers[j] = 0;
 	}
 	MPI_Win_unlock(workrank, sharerWindow);
-#if ARGO_MEM_ALLOC_POLICY == 1
+
+#if   ARGO_MEM_ALLOC_POLICY == 1
 	MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, ownerWindow);
 	globalOwners[0] = 0x1;
 	globalOwners[1] = 0x0;
@@ -1715,6 +1697,7 @@ void argo_reset_coherence(int n){
 	}
 	MPI_Win_unlock(workrank, ownerWindow);
 #endif
+
 	sem_post(&ibsem);
 	swdsm_argo_barrier(n);
 	mprotect(startAddr,size_of_all,PROT_NONE);

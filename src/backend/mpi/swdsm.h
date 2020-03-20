@@ -359,19 +359,20 @@ unsigned long getHomenode(unsigned long addr);
  * @return addr-(start address of local process part of global memory)
  */
 unsigned long getOffset(unsigned long addr);
-#if ARGO_MEM_ALLOC_POLICY == 1
-/**
- * @brief Gives ownership of a page to the process that first touched it
- * @param addr Address in the global address space
- * @return the homenode that is the owner of addr
- */
-unsigned long firstTouch(unsigned long addr);
-#endif
 /**
  * @brief Gives an index to the sharer/writer vector depending on the address
  * @param addr Address in the global address space
  * @return index for sharer vector for the page
  */
 inline unsigned long get_classification_index(uint64_t addr);
+
+#if ARGO_MEM_ALLOC_POLICY == 1
+/**
+ * @brief Gives ownership of a page to the process that first touched it
+ * @param addr Address in the global address space
+ */
+void firstTouch(unsigned long addr);
+#endif
+
 #endif /* argo_swdsm_h */
 
