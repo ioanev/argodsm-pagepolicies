@@ -346,7 +346,6 @@ inline unsigned long get_classification_index(uint64_t addr);
 /**
  * @brief Gives ownership of a page to the process that first touched it
  * @param addr Address in the global address space
- * @return the homenode that is the owner of addr
  */
 void firstTouch(unsigned long addr);
 #endif
