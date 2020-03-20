@@ -1568,10 +1568,12 @@ void argo_finalize(){
 		MPI_Win_free(&globalDataWindow[i]);
 	}
 	MPI_Win_free(&sharerWindow);
+
 #if ARGO_MEM_ALLOC_POLICY == 1 || \
 	ARGO_MEM_ALLOC_POLICY == 2
 	MPI_Win_free(&ownerWindow);
 #endif
+
 	MPI_Win_free(&lockWindow);
 	MPI_Comm_free(&workcomm);
 	MPI_Finalize();
