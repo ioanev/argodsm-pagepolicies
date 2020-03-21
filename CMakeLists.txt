@@ -35,7 +35,7 @@ include_directories("${PROJECT_SOURCE_DIR}/src")
 add_subdirectory(src)
 
 option(ARGO_TESTS
-	"Build tests for ArgoDSM" ON)
+  "Build tests for ArgoDSM" ON)
 if(ARGO_TESTS)
 	enable_testing()
 	include_directories("${PROJECT_SOURCE_DIR}/tests")

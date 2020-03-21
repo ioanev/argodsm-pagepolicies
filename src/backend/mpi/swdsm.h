@@ -71,7 +71,7 @@
  * 2 : Round-Robin memory allocation policy.
  * 3 : ...
  */
-#define ARGO_MEM_ALLOC_POLICY 1
+#define ARGO_MEM_ALLOC_POLICY 2
 
 /** @brief Wrapper for unsigned char - basically a byte */
 typedef unsigned char argo_byte;
