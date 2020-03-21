@@ -521,8 +521,20 @@ unsigned long getHomenode(unsigned long addr){
 		exit(EXIT_FAILURE);
 	}
 	return homenode;
-#elif ARGO_MEM_ALLOC_POLICY == 1 || \
-	  ARGO_MEM_ALLOC_POLICY == 2
+#elif ARGO_MEM_ALLOC_POLICY == 1
+	unsigned long index = 2*(addr/pagesize);
+	unsigned long homenode = globalOwners[index];
+	
+	int n;
+	for(n = 0; n < numtasks; n++)
+		if((unsigned long)(1 << n) == homenode)
+			homenode = n;
+
+	if(homenode >=(unsigned long)numtasks){
+		exit(EXIT_FAILURE);
+	}
+	return homenode;
+#elif ARGO_MEM_ALLOC_POLICY == 2
 	unsigned long index = 2*(addr/pagesize);
 	unsigned long homenode = globalOwners[index];
 	if(homenode >=(unsigned long)numtasks){
