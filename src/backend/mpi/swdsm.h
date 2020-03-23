@@ -62,16 +62,22 @@
 #define UNUSED_PARAM(x) (void)(x)
 
 /** @brief 1 for activating two memory requests in parallel, 0 for disabling*/
-#define DUAL_LOAD 0
+#define DUAL_LOAD 1
 
 /**
- * @brief Compiler directive for selecting the memory allocation policy.
- * 0 : Default memory allocation policy.
- * 1 : First-touch memory allocation policy.
- * 2 : Round-Robin memory allocation policy.
- * 3 : ...
+ * @brief Compiler directive for selecting the memory allocation policy
+ * 0 : Bind-All memory allocation policy
+ * 1 : First-Touch memory allocation policy
+ * 2 : Cyclic memory allocation policy
+ * 3 : Cyclic-Block memory allocation policy
+ * 4 : Skew-Mapp memory allocation policy
+ * 5 : Skew-Mapp-Block memory allocation policy
+ * 6 : ...
  */
-#define ARGO_MEM_ALLOC_POLICY 1
+#define ARGO_MEM_ALLOC_POLICY 3
+
+/** @brief Page block size for the block policies */
+#define PAGE_BLOCK 1
 
 /** @brief Wrapper for unsigned char - basically a byte */
 typedef unsigned char argo_byte;
