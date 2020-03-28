@@ -347,6 +347,8 @@ void handler(int sig, siginfo_t *si, void *unused){
 	unsigned long id = 1 << getID();
 	unsigned long invid = ~id;
 
+	//printf("Process: %i, addr: 0x%X, homenode: %lu, offset: 0x%X\n", workrank, aligned_access_offset, homenode, offset);
+
 	pthread_mutex_lock(&cachemutex);
 
 	/* page is local */
@@ -651,7 +653,7 @@ unsigned long getOffset(unsigned long addr){
 		for (addr -= pagesize; ; addr -= pagesize) {
 			lessaddr = (addr != 0) ? addr - pagesize : 0;
 			homecounter += (getHomenode(addr) == homenode) ? 1 : 0;
-			if ((lessaddr <= (numtasks * pagesize)) || 
+			if (((lessaddr <= (numtasks * pagesize)) && (getHomenode(addr) == homenode)) ||
 				((((lessaddr / pagesize) % prime) >= numtasks) && (getHomenode(addr) == homenode))) {
 				offset = ((lessaddr / pagesize) / numtasks) * pagesize + !homenode * pagesize;
 				offset += homecounter * pagesize;
@@ -675,7 +677,7 @@ unsigned long getOffset(unsigned long addr){
 		for (addr -= pageblock; ; addr -= pageblock) {
 			lessaddr = (addr != 0) ? addr - pagesize : 0;
 			homecounter += (getHomenode(addr) == homenode) ? 1 : 0;
-			if ((lessaddr <= (numtasks * pageblock)) || 
+			if (((lessaddr <= (numtasks * pageblock)) && (getHomenode(addr) == homenode)) || 
 				((((lessaddr / pageblock) % prime) >= numtasks) && (getHomenode(addr) == homenode))) {
 				offset = ((lessaddr / pageblock) / numtasks) * pageblock + lessaddr % pageblock + !homenode * pagesize;
 				offset += homecounter * pageblock;
