@@ -651,10 +651,11 @@ unsigned long getOffset(unsigned long addr){
 		unsigned long homecounter = 0;
 		unsigned long homenode = getHomenode(addr);
 		for (addr -= pagesize; ; addr -= pagesize) {
-			lessaddr = (addr != 0) ? addr - pagesize : 0;
-			homecounter += (getHomenode(addr) == homenode) ? 1 : 0;
-			if (((lessaddr <= (numtasks * pagesize)) && (getHomenode(addr) == homenode)) ||
-				((((lessaddr / pagesize) % prime) >= numtasks) && (getHomenode(addr) == homenode))) {
+			lessaddr = addr - pagesize;
+			unsigned long currhome = getHomenode(addr);
+			homecounter += (currhome == homenode) ? 1 : 0;
+			if (((addr <= (numtasks * pagesize)) && (currhome == homenode)) ||
+				((((lessaddr / pagesize) % prime) >= numtasks) && (currhome == homenode))) {
 				offset = ((lessaddr / pagesize) / numtasks) * pagesize + !homenode * pagesize;
 				offset += homecounter * pagesize;
 				break;
@@ -675,10 +676,11 @@ unsigned long getOffset(unsigned long addr){
 		unsigned long homecounter = 0;
 		unsigned long homenode = getHomenode(addr);
 		for (addr -= pageblock; ; addr -= pageblock) {
-			lessaddr = (addr != 0) ? addr - pagesize : 0;
-			homecounter += (getHomenode(addr) == homenode) ? 1 : 0;
-			if (((lessaddr <= (numtasks * pageblock)) && (getHomenode(addr) == homenode)) || 
-				((((lessaddr / pageblock) % prime) >= numtasks) && (getHomenode(addr) == homenode))) {
+			lessaddr = addr - pagesize;
+			unsigned long currhome = getHomenode(addr);
+			homecounter += (currhome == homenode) ? 1 : 0;
+			if (((addr <= (numtasks * pageblock)) && (currhome == homenode)) || 
+				((((lessaddr / pageblock) % prime) >= numtasks) && (currhome == homenode))) {
 				offset = ((lessaddr / pageblock) / numtasks) * pageblock + lessaddr % pageblock + !homenode * pagesize;
 				offset += homecounter * pageblock;
 				break;

@@ -75,10 +75,10 @@
  * 6 : Prime-Mapp memory allocation policy
  * 7 : Prime-Mapp-Block memory allocation policy
  */
-#define ARGO_MEM_ALLOC_POLICY 6
+#define ARGO_MEM_ALLOC_POLICY 7
 
 /** @brief Page block size for the block policies */
-#define PAGE_BLOCK 7
+#define PAGE_BLOCK 4
 
 /** @brief Wrapper for unsigned char - basically a byte */
 typedef unsigned char argo_byte;
