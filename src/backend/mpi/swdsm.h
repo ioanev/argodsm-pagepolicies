@@ -67,13 +67,13 @@
 /**
  * @brief Compiler directive for selecting the memory allocation policy
  * 0 : Bind-All memory allocation policy
- * 1 : First-Touch memory allocation policy
- * 2 : Cyclic memory allocation policy
- * 3 : Cyclic-Block memory allocation policy
- * 4 : Skew-Mapp memory allocation policy
- * 5 : Skew-Mapp-Block memory allocation policy
- * 6 : Prime-Mapp memory allocation policy
- * 7 : Prime-Mapp-Block memory allocation policy
+ * 1 : Cyclic memory allocation policy
+ * 2 : Cyclic-Block memory allocation policy
+ * 3 : Skew-Mapp memory allocation policy
+ * 4 : Skew-Mapp-Block memory allocation policy
+ * 5 : Prime-Mapp memory allocation policy
+ * 6 : Prime-Mapp-Block memory allocation policy
+ * 7 : First-Touch memory allocation policy
  */
 #define ARGO_MEM_ALLOC_POLICY 7
 
@@ -349,12 +349,12 @@ unsigned long getOffset(unsigned long addr);
  */
 inline unsigned long get_classification_index(uint64_t addr);
 
-#if ARGO_MEM_ALLOC_POLICY == 1
+#if ARGO_MEM_ALLOC_POLICY == 7
 /**
  * @brief Gives ownership of a page to the process that first touched it
  * @param addr Address in the global address space
  */
-void firstTouch(unsigned long addr);
+void firstTouch(const unsigned long& addr);
 #endif
 
 #endif /* argo_swdsm_h */
