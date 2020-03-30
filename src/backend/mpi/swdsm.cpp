@@ -347,7 +347,7 @@ void handler(int sig, siginfo_t *si, void *unused){
 	unsigned long id = 1 << getID();
 	unsigned long invid = ~id;
 
-	printf("Process: %i, addr: 0x%X, homenode: %lu, offset: 0x%X\n", workrank, aligned_access_offset, homenode, offset);
+	//printf("Process: %i, addr: 0x%X, homenode: %lu, offset: 0x%X\n", workrank, aligned_access_offset, homenode, offset);
 
 	pthread_mutex_lock(&cachemutex);
 
