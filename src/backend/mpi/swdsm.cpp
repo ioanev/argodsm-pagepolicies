@@ -141,7 +141,6 @@ unsigned long GLOBAL_NULL;
 argo_statistics stats;
 
 /*Policies*/
-#if ARGO_MEM_ALLOC_POLICY == 7
 /** @brief  Holds the owner of a page */
 unsigned long *globalOwners;
 /** @brief  Size of the owner directory */
@@ -152,7 +151,6 @@ unsigned long ownerOffset;
 MPI_Win ownerWindow;
 /** @brief  Protects the owner directory */
 pthread_mutex_t ownermutex = PTHREAD_MUTEX_INITIALIZER;
-#endif
 
 namespace {
 	/** @brief constant for invalid ArgoDSM node */
@@ -347,8 +345,6 @@ void handler(int sig, siginfo_t *si, void *unused){
 	unsigned long id = 1 << getID();
 	unsigned long invid = ~id;
 
-	//printf("Process: %i, addr: 0x%X, homenode: %lu, offset: 0x%X\n", workrank, aligned_access_offset, homenode, offset);
-
 	pthread_mutex_lock(&cachemutex);
 
 	/* page is local */
@@ -518,44 +514,24 @@ void handler(int sig, siginfo_t *si, void *unused){
 unsigned long getHomenode(unsigned long addr){
 #if   ARGO_MEM_ALLOC_POLICY == 0
 	const unsigned long homenode = addr / size_of_chunk;
-	if(homenode >=(unsigned long)numtasks){
-		exit(EXIT_FAILURE);
-	}
-	return homenode;
 #elif ARGO_MEM_ALLOC_POLICY == 1
 	const unsigned long lessaddr = (addr != 0) ? addr - pagesize : 0;
 	const unsigned long pagenum = lessaddr / pagesize;
 	const unsigned long homenode = pagenum % numtasks;
-	if(homenode >=(unsigned long)numtasks){
-		exit(EXIT_FAILURE);
-	}
-	return homenode;
 #elif ARGO_MEM_ALLOC_POLICY == 2
 	static const unsigned long pageblock = PAGE_BLOCK * pagesize;
 	const unsigned long lessaddr = (addr != 0) ? addr - pagesize : 0;
 	const unsigned long pagenum = lessaddr / pageblock;
 	const unsigned long homenode = pagenum % numtasks;
-	if(homenode >=(unsigned long)numtasks){
-		exit(EXIT_FAILURE);
-	}
-	return homenode;
 #elif ARGO_MEM_ALLOC_POLICY == 3
 	const unsigned long lessaddr = (addr != 0) ? addr - pagesize : 0;
 	const unsigned long pagenum = lessaddr / pagesize;
 	const unsigned long homenode = (pagenum + pagenum / numtasks) % numtasks;
-	if(homenode >=(unsigned long)numtasks){
-		exit(EXIT_FAILURE);
-	}
-	return homenode;
 #elif ARGO_MEM_ALLOC_POLICY == 4
 	static const unsigned long pageblock = PAGE_BLOCK * pagesize;
 	const unsigned long lessaddr = (addr != 0) ? addr - pagesize : 0;
 	const unsigned long pagenum = lessaddr / pageblock;
 	const unsigned long homenode = (pagenum + pagenum / numtasks) % numtasks;
-	if(homenode >=(unsigned long)numtasks){
-		exit(EXIT_FAILURE);
-	}
-	return homenode;
 #elif ARGO_MEM_ALLOC_POLICY == 5
 	static const unsigned long prime = (3 * numtasks) / 2;
 	const unsigned long lessaddr = (addr != 0) ? addr - pagesize : 0;
@@ -563,10 +539,6 @@ unsigned long getHomenode(unsigned long addr){
     const unsigned long homenode = ((pagenum % prime) >= numtasks)
     ? ((pagenum / prime) * (prime - numtasks) + ((pagenum % prime) - numtasks)) % numtasks
     : pagenum % prime;
-	if(homenode >=(unsigned long)numtasks){
-		exit(EXIT_FAILURE);
-	}
-	return homenode;
 #elif ARGO_MEM_ALLOC_POLICY == 6
 	static const unsigned long pageblock = PAGE_BLOCK * pagesize;
 	static const unsigned long prime = (3 * numtasks) / 2;
@@ -575,10 +547,6 @@ unsigned long getHomenode(unsigned long addr){
     const unsigned long homenode = ((pagenum % prime) >= numtasks)
     ? ((pagenum / prime) * (prime - numtasks) + ((pagenum % prime) - numtasks)) % numtasks
     : pagenum % prime;
-	if(homenode >=(unsigned long)numtasks){
-		exit(EXIT_FAILURE);
-	}
-	return homenode;
 #elif ARGO_MEM_ALLOC_POLICY == 7
 	const unsigned long index = 2 * (addr / pagesize);
 	unsigned long homenode = globalOwners[index];
@@ -587,32 +555,23 @@ unsigned long getHomenode(unsigned long addr){
 	for(n = 0; n < numtasks; n++)
 		if((unsigned long)(1 << n) == homenode)
 			homenode = n;
+#endif
 
 	if(homenode >=(unsigned long)numtasks){
 		exit(EXIT_FAILURE);
 	}
 	return homenode;
-#endif
 }
 
 unsigned long getOffset(unsigned long addr){
 #if   ARGO_MEM_ALLOC_POLICY == 0
-	//offset in local memory on remote node (homenode)
 	const unsigned long offset = addr - (getHomenode(addr)) * size_of_chunk;
-	if(offset >=size_of_chunk){
-		exit(EXIT_FAILURE);
-	}
-	return offset;
 #elif ARGO_MEM_ALLOC_POLICY == 1
 	const unsigned long lessaddr = (addr != 0) ? addr - pagesize : 0;
 	const unsigned long pagenum = lessaddr / pagesize;
 	const unsigned long offset = (addr > 0 && getHomenode(addr) == 0)
 	? pagenum / numtasks * pagesize + pagesize
 	: pagenum / numtasks * pagesize;
-	if(offset >=size_of_chunk){
-		exit(EXIT_FAILURE);
-	}
-	return offset;
 #elif ARGO_MEM_ALLOC_POLICY == 2
 	static const unsigned long pageblock = PAGE_BLOCK * pagesize;
 	const unsigned long lessaddr = (addr != 0) ? addr - pagesize : 0;
@@ -620,20 +579,12 @@ unsigned long getOffset(unsigned long addr){
 	const unsigned long offset = (addr > 0 && getHomenode(addr) == 0)
 	? pagenum / numtasks * pageblock + lessaddr % pageblock + pagesize
 	: pagenum / numtasks * pageblock + lessaddr % pageblock;
-	if(offset >=size_of_chunk){
-		exit(EXIT_FAILURE);
-	}
-	return offset;
 #elif ARGO_MEM_ALLOC_POLICY == 3
 	const unsigned long lessaddr = (addr != 0) ? addr - pagesize : 0;
 	const unsigned long pagenum = lessaddr / pagesize;
 	const unsigned long offset = (addr > 0 && getHomenode(addr) == 0)
 	? pagenum / numtasks * pagesize + pagesize
 	: pagenum / numtasks * pagesize;
-	if(offset >=size_of_chunk){
-		exit(EXIT_FAILURE);
-	}
-	return offset;
 #elif ARGO_MEM_ALLOC_POLICY == 4
 	static const unsigned long pageblock = PAGE_BLOCK * pagesize;
 	const unsigned long lessaddr = (addr != 0) ? addr - pagesize : 0;
@@ -641,10 +592,6 @@ unsigned long getOffset(unsigned long addr){
 	const unsigned long offset = (addr > 0 && getHomenode(addr) == 0)
 	? pagenum / numtasks * pageblock + lessaddr % pageblock + pagesize
 	: pagenum / numtasks * pageblock + lessaddr % pageblock;
-	if(offset >=size_of_chunk){
-		exit(EXIT_FAILURE);
-	}
-	return offset;
 #elif ARGO_MEM_ALLOC_POLICY == 5
 	static const unsigned long prime = (3 * numtasks) / 2;
 	unsigned long offset, lessaddr = (addr != 0) ? addr - pagesize : 0;
@@ -668,10 +615,6 @@ unsigned long getOffset(unsigned long addr){
 			}
 		}
 	}
-	if(offset >=size_of_chunk){
-		exit(EXIT_FAILURE);
-	}
-	return offset;
 #elif ARGO_MEM_ALLOC_POLICY == 6
 	static const unsigned long pageblock = PAGE_BLOCK * pagesize;
 	static const unsigned long prime = (3 * numtasks) / 2;
@@ -696,36 +639,26 @@ unsigned long getOffset(unsigned long addr){
 			}
 		}
 	}
-	if(offset >=size_of_chunk){
-		exit(EXIT_FAILURE);
-	}
-	return offset;
 #elif ARGO_MEM_ALLOC_POLICY == 7
 	const unsigned long index = 2 * (addr / pagesize);
 	const unsigned long offset = globalOwners[index + 1];
+#endif
+	
 	if(offset >=size_of_chunk){
 		exit(EXIT_FAILURE);
 	}
 	return offset;
-#endif
 }
 
-#if   ARGO_MEM_ALLOC_POLICY == 7
 void firstTouch(const unsigned long& addr) {
+	// Variables for CAS.
+	unsigned long result;
+	constexpr unsigned long compare = 0;
 	const unsigned long id = 1 << getID();
 	const unsigned long index = 2 * (addr / pagesize);
 
 	pthread_mutex_lock(&ownermutex);
 	sem_wait(&ibsem);
-
-	//printf("(pr_bef) Process: %i, localAlignedAddr: %p, [0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X]\n", workrank, (void*)((char*)startAddr + addr),
-	//		globalOwners[0], globalOwners[1], globalOwners[2], globalOwners[3], globalOwners[4], globalOwners[5],
-	//		globalOwners[6], globalOwners[7], globalOwners[8], globalOwners[9], globalOwners[10], globalOwners[11]);
-	//fflush(stdout);
-
-	// Variables for CAS.
-	unsigned long result;
-	constexpr unsigned long compare = 0;
 	
 	// Check/try to acquire ownership of the page.
 	MPI_Win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, ownerWindow);
@@ -735,11 +668,11 @@ void firstTouch(const unsigned long& addr) {
 	MPI_Win_unlock(0, ownerWindow);
 
 	// This process was the first one to deposit the id.
-	if (result == 0) {	
+	if (result == 0) {
 		// Mark the page in the local window.
 		MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, ownerWindow);
-		globalOwners[index] |= id; // OR operation for debugging...
-		globalOwners[index+1] |= ownerOffset; // OR operation for debugging...
+		globalOwners[index] = id;
+		globalOwners[index+1] = ownerOffset;
 		MPI_Win_unlock(workrank, ownerWindow);
 
 		// Mark the page in the public windows.
@@ -747,24 +680,18 @@ void firstTouch(const unsigned long& addr) {
 		for(n = 0; n < numtasks; n++)
 			if (n != workrank) {
 				MPI_Win_lock(MPI_LOCK_EXCLUSIVE, n, 0, ownerWindow);
-				MPI_Accumulate(&id, 1, MPI_LONG, n, index, 1, MPI_LONG, MPI_BOR, ownerWindow); // MPI_BOR operation for debugging...
-				MPI_Accumulate(&ownerOffset, 1, MPI_LONG, n, index+1, 1, MPI_LONG, MPI_BOR, ownerWindow); // MPI_BOR operation for debugging...
+				MPI_Accumulate(&id, 1, MPI_LONG, n, index, 1, MPI_LONG, MPI_REPLACE, ownerWindow);
+				MPI_Accumulate(&ownerOffset, 1, MPI_LONG, n, index+1, 1, MPI_LONG, MPI_REPLACE, ownerWindow);
 				MPI_Win_unlock(n, ownerWindow);
 			}
 		
 		// Since a new page was acquired increase the homenode offset.
 		ownerOffset += pagesize;
 	}
-	
-	//printf("(pr_aft) Process: %i, localAlignedAddr: %p, [0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X]\n", workrank, (void*)((char*)startAddr + addr),
-	//		globalOwners[0], globalOwners[1], globalOwners[2], globalOwners[3], globalOwners[4], globalOwners[5],
-	//		globalOwners[6], globalOwners[7], globalOwners[8], globalOwners[9], globalOwners[10], globalOwners[11]);
-	//fflush(stdout);
-	
+		
 	sem_post(&ibsem);
 	pthread_mutex_unlock(&ownermutex);
 }
-#endif
 
 void write_back_writebuffer() {
 	unsigned long i;
@@ -1240,11 +1167,9 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	unsigned long gwritersize = classificationSize*sizeof(long);
 
 #if ARGO_MEM_ALLOC_POLICY == 7
-	ownerSize  = argo_size;
-	ownerSize += pagesize * CACHELINE;
+	ownerSize = argo_size;
+	ownerSize += pagesize;
 	ownerSize /= pagesize;
-	ownerSize /= CACHELINE;
-	ownerSize *= CACHELINE;
 	ownerSize *= 2;
 	unsigned long ownerSizeBytes = ownerSize * sizeof(unsigned long);
 
