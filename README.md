@@ -12,13 +12,13 @@ Please contact us at [contact@argodsm.com](mailto:contact@argodsm.com)
 
 # PagePolicies
 
-This branch consists a stable version of ArgoDSM with the following incorporated
-page placement policies (implementation is under the swdsm.cpp and swdsm.h files):
- - 0 : Bind-All
- - 1 : Cyclic
- - 2 : Cyclic-Block
- - 3 : Skew-Mapp
- - 4 : Skew-Mapp-Block
- - 5 : Prime-Mapp
- - 6 : Prime-Mapp-Block
- - 7 : First-Touch
+This branch consists of a stable version of ArgoDSM with the following incorporated
+page-based memory allocation policies (implementation is under the swdsm.cpp and swdsm.h files):
+- 0 : Bind-All
+- 1 : Cyclic
+- 2 : Cyclic-Block
+- 3 : Skew-Mapp
+- 4 : Skew-Mapp-Block
+- 5 : Prime-Mapp
+- 6 : Prime-Mapp-Block
+- 7 : First-Touch
