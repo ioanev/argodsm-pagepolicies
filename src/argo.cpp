@@ -4,9 +4,6 @@
  * @copyright Eta Scale AB. Licensed under the Eta Scale Open Source License. See the LICENSE file for details.
  */
 
-#include <sys/types.h>
-#include <unistd.h>
-
 #include "argo.hpp"
 
 #include "allocators/collective_allocator.hpp"

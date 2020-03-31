@@ -52,10 +52,6 @@ namespace argo {
 					memory = backend::global_base();
 					max_size = backend::global_size();
 					offset = new (&memory[0]) ptrdiff_t;
-
-					//printf("(global_mempool) Process: %i, nodes: %i, memory: %p, max_size: 0x%X, offset: 0x%X\n",
-					//       backend::node_id(), nodes, (void*)memory, max_size, *offset);
-
 					/**@todo this initialization should move to tools::init() land */
 					using namespace data_distribution;
 					naive_data_distribution<0>::set_memory_space(nodes, memory, max_size);
@@ -65,8 +61,6 @@ namespace argo {
 					if(backend::node_id()==0){
 						/**@todo if needed - pad offset to be page or pagecache size and make sure offset and flag fits */
 						*offset = static_cast<std::ptrdiff_t>(reserved);
-						//printf("(global_mempool) Process: %i, offset: %p\n",
-						//       backend::node_id(), (void*)offset);
 					}
 					backend::barrier();
 				}
@@ -88,9 +82,6 @@ namespace argo {
 					max_size = backend::global_size();
 					if(backend::node_id()==0){
 						/**@todo if needed - pad offset to be page or pagecache size and make sure offset and flag fits */
-						// Conducted a test where process 0 was traversing an array of size 409600 with argo_size 819200.
-						// in the default case *offset = reserved: array was traversed in 5466521 nanoseconds.
-						// in the case where *offset = 409600: array was traversed in 9441688 nanoseconds.
 						*offset = static_cast<std::ptrdiff_t>(reserved);
 					}
 					backend::barrier();
@@ -112,10 +103,6 @@ namespace argo {
 					ptr = &memory[*offset];
 					*offset += size;
 					global_tas_lock->unlock();
-
-					//printf("(reserve) Process: %i, ptr: %p, offset: 0x%X\n",
-					//	   backend::node_id(), (void*)ptr, *offset);
-
 					return ptr;
 				}
 

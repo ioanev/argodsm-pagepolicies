@@ -12,8 +12,24 @@
 
 #include "../types/types.hpp"
 
+/**
+ * @brief Compiler directive for selecting the memory allocation policy
+ * 0 : Bind-All memory allocation policy
+ * 1 : Cyclic memory allocation policy
+ * 2 : Cyclic-Block memory allocation policy
+ * 3 : Skew-Mapp memory allocation policy
+ * 4 : Skew-Mapp-Block memory allocation policy
+ * 5 : Prime-Mapp memory allocation policy
+ * 6 : Prime-Mapp-Block memory allocation policy
+ * 7 : First-Touch memory allocation policy
+ */
+#define ARGO_MEM_ALLOC_POLICY 7
+
+/** @brief Page block size for the block policies */
+#define PAGE_BLOCK 4
+
 namespace argo {
-	namespace data_distribution {
+	namespace data_distribution {		
 		/* forward declaration */
 		template<int instance> class naive_data_distribution;
 
@@ -126,22 +142,25 @@ namespace argo {
 				}
 
 				/**
+				 * @brief Gives ownership of a page to the process that first touched it
+				 * @param addr Address in the global address 
+				 * @return The homenode of addr
+				 */
+				static std::size_t firstTouch (const std::size_t& addr);
+
+				/**
 				 * @brief compute home node of an address
 				 * @param ptr address to find homenode of
 				 * @return the computed home node
 				 */
-				static node_id_t homenode (char* const ptr) {
-					return (ptr - start_address) / size_per_node;
-				}
+				static node_id_t homenode (char* const ptr);
 
 				/**
 				 * @brief compute offset into the home node's share of the memory
 				 * @param ptr address to find offset of
 				 * @return the computed offset
 				 */
-				static std::size_t local_offset (char* const ptr) {
-					return (ptr - start_address) - homenode(ptr)*size_per_node;
-				}
+				static std::size_t local_offset (char* const ptr);
 
 				/**
 				 * @brief compute a pointer value

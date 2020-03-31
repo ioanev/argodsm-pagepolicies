@@ -1,99 +1,57 @@
 {
-    "todohighlight.isEnable": true,
-    "todohighlight.isCaseSensitive": true,
-    "todohighlight.keywords":
-    [
-        {
-            "text": "OK",
-            "color": "white",
-            // "border": "1px solid red",
-            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
-            "backgroundColor": "rgba(0,255,0,.5)",
-            //other styling properties goes here ... 
-        },
-
-        {
-            "text": "FIXME",
-            "color": "white",
-            // "border": "1px solid red",
-            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
-            "backgroundColor": "rgba(255,0,0,.5)",
-            //other styling properties goes here ... 
-        },
-
-        {
-            "text": "QUESTION",
-            "color": "black",
-            // "border": "1px solid red",
-            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
-            "backgroundColor": "rgba(255,255,0,.5)",
-            //other styling properties goes here ... 
-        },
-
-        {
-            "text": "TODO",
-            "color": "white",
-            // "border": "1px solid red",
-            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
-            "backgroundColor": "rgba(128,128,128,.5)",
-            //other styling properties goes here ... 
-        },
-        
-        {
-            "text": "RETN",
-            "color": "black",
-            // "border": "1px solid red",
-            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
-            "backgroundColor": "rgba(0,255,0,.5)",
-            //other styling properties goes here ... 
-        },
-
-        {
-            "text": "-/->", // Mutex lock 
-            "color": "black",
-            // "border": "1px solid red",
-            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
-            "backgroundColor": "rgba(255,0,5,.5)",
-            //other styling properties goes here ... 
-        },
-
-        {
-            "text": "<-/-", // Mutex unlock
-            "color": "white",
-            // "border": "1px solid red",
-            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
-            "backgroundColor": "rgba(255,0,5,.5)",
-            //other styling properties goes here ... 
-        },
-
-        {
-            "text": "-|->", // Semaphore wait
-            "color": "black",
-            // "border": "1px solid red",
-            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
-            "backgroundColor": "rgba(255,255,5,.5)",
-            //other styling properties goes here ... 
-        },
-
-        {
-            "text": "<-|-", // Semaphore signal
-            "color": "white",
-            // "border": "1px solid red",
-            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
-            "backgroundColor": "rgba(255,255,5,.5)",
-            //other styling properties goes here ... 
-        }
-    ],
     "cmake.configureOnOpen": false,
     "files.associations": {
+        "array": "cpp",
+        "atomic": "cpp",
         "*.tcc": "cpp",
-        "memory_resource": "cpp",
-        "sstream": "cpp",
-        "new": "cpp",
-        "system_error": "cpp",
-        "ostream": "cpp",
+        "cctype": "cpp",
+        "chrono": "cpp",
+        "clocale": "cpp",
+        "cmath": "cpp",
+        "condition_variable": "cpp",
+        "csignal": "cpp",
+        "cstdarg": "cpp",
+        "cstddef": "cpp",
+        "cstdint": "cpp",
+        "cstdio": "cpp",
+        "cstdlib": "cpp",
+        "cstring": "cpp",
+        "ctime": "cpp",
+        "cwchar": "cpp",
+        "cwctype": "cpp",
+        "deque": "cpp",
+        "unordered_map": "cpp",
+        "vector": "cpp",
+        "exception": "cpp",
+        "algorithm": "cpp",
         "functional": "cpp",
+        "iterator": "cpp",
+        "map": "cpp",
+        "memory": "cpp",
+        "memory_resource": "cpp",
+        "numeric": "cpp",
+        "optional": "cpp",
+        "random": "cpp",
+        "ratio": "cpp",
         "string": "cpp",
-        "vector": "cpp"
+        "string_view": "cpp",
+        "system_error": "cpp",
+        "tuple": "cpp",
+        "type_traits": "cpp",
+        "utility": "cpp",
+        "fstream": "cpp",
+        "initializer_list": "cpp",
+        "iosfwd": "cpp",
+        "iostream": "cpp",
+        "istream": "cpp",
+        "limits": "cpp",
+        "mutex": "cpp",
+        "new": "cpp",
+        "ostream": "cpp",
+        "sstream": "cpp",
+        "stdexcept": "cpp",
+        "streambuf": "cpp",
+        "thread": "cpp",
+        "typeinfo": "cpp"
     }
 }
