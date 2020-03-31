@@ -343,7 +343,7 @@ void handler(int sig, siginfo_t *si, void *unused){
 	unsigned long id = 1 << getID();
 	unsigned long invid = ~id;
 
-	printf("Process: %i, addr: 0x%X, homenode: %lu, offset: 0x%X\n", workrank, aligned_access_offset, homenode, offset);
+	//printf("Process: %i, addr: 0x%X, homenode: %lu, offset: 0x%X\n", workrank, aligned_access_offset, homenode, offset);
 
 	pthread_mutex_lock(&cachemutex);
 
@@ -995,11 +995,9 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	unsigned long gwritersize = classificationSize*sizeof(long);
 
 #if ARGO_MEM_ALLOC_POLICY == 7
-	ownerSize  = argo_size;
-	ownerSize += pagesize * CACHELINE;
+	ownerSize = argo_size;
+	ownerSize += pagesize;
 	ownerSize /= pagesize;
-	ownerSize /= CACHELINE;
-	ownerSize *= CACHELINE;
 	ownerSize *= 2;
 	unsigned long ownerSizeBytes = ownerSize * sizeof(unsigned long);
 
