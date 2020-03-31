@@ -223,7 +223,7 @@ namespace argo {
                 const std::size_t offset = globalOwners[index + 1];
             #endif
 
-            if(offset >=size_per_node){
+            if(offset >=(std::size_t)size_per_node){
                 exit(EXIT_FAILURE);
             }
             return offset;
