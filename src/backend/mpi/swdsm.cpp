@@ -143,6 +143,7 @@ unsigned long GLOBAL_NULL;
 argo_statistics stats;
 
 /*Policies*/
+#if ARGO_MEM_ALLOC_POLICY == 7
 /** @brief  Holds the owner of a page */
 unsigned long *globalOwners;
 /** @brief  Size of the owner directory */
@@ -153,6 +154,7 @@ unsigned long ownerOffset;
 MPI_Win ownerWindow;
 /** @brief  Protects the owner directory */
 pthread_mutex_t ownermutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 namespace {
 	/** @brief constant for invalid ArgoDSM node */
@@ -343,7 +345,7 @@ void handler(int sig, siginfo_t *si, void *unused){
 	unsigned long id = 1 << getID();
 	unsigned long invid = ~id;
 
-	//printf("Process: %i, addr: 0x%X, homenode: %lu, offset: 0x%X\n", workrank, aligned_access_offset, homenode, offset);
+	//printf("Process: %i, addr: 0x%X, homenode: %lu, offset: 0x%X\n", workrank, (int)aligned_access_offset, homenode, (int)offset);
 
 	pthread_mutex_lock(&cachemutex);
 

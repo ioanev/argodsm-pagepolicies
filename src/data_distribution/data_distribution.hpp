@@ -146,7 +146,9 @@ namespace argo {
 				 * @param addr Address in the global address 
 				 * @return The homenode of addr
 				 */
+			#if ARGO_MEM_ALLOC_POLICY == 7
 				static std::size_t firstTouch (const std::size_t& addr);
+			#endif
 
 				/**
 				 * @brief compute home node of an address

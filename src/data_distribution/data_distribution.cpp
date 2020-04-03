@@ -6,6 +6,7 @@
 static constexpr std::size_t granularity = 0x1000UL;
 
 /*Policies*/
+#if ARGO_MEM_ALLOC_POLICY == 7
 /** @brief  Holds the owner of a page */
 extern std::size_t *globalOwners;
 /** @brief  Allocator offset for the node */
@@ -16,9 +17,11 @@ extern MPI_Win ownerWindow;
 extern pthread_mutex_t ownermutex;
 /** @brief  More useful variables */
 extern int workrank;
+#endif
 
 namespace argo {
 	namespace data_distribution {
+    #if ARGO_MEM_ALLOC_POLICY == 7
         template<>
         std::size_t naive_data_distribution<0>::firstTouch (const std::size_t& addr) {
             // Variables for CAS.
@@ -68,6 +71,7 @@ namespace argo {
 
             return homenode;
         }
+    #endif
 
         template<>
         node_id_t naive_data_distribution<0>::homenode (char* const ptr) {
@@ -101,7 +105,7 @@ namespace argo {
                 const std::size_t addr = ptr - start_address;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : 0;
                 const std::size_t pagenum = lessaddr / granularity;
-                const node_id_t homenode = ((pagenum % prime) >= nodes)
+                const node_id_t homenode = ((pagenum % prime) >= (std::size_t)nodes)
                 ? ((pagenum / prime) * (prime - nodes) + ((pagenum % prime) - nodes)) % nodes
                 : pagenum % prime;
             #elif ARGO_MEM_ALLOC_POLICY == 6
@@ -110,7 +114,7 @@ namespace argo {
                 const std::size_t addr = ptr - start_address;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : 0;
                 const std::size_t pagenum = lessaddr / pageblock;
-                const node_id_t homenode = ((pagenum % prime) >= nodes)
+                const node_id_t homenode = ((pagenum % prime) >= (std::size_t)nodes)
                 ? ((pagenum / prime) * (prime - nodes) + ((pagenum % prime) - nodes)) % nodes
                 : pagenum % prime;
             #elif ARGO_MEM_ALLOC_POLICY == 7
@@ -139,42 +143,47 @@ namespace argo {
                 const std::size_t addr = ptr - start_address;
                 const std::size_t offset = addr - (homenode(ptr)) * size_per_node;
             #elif ARGO_MEM_ALLOC_POLICY == 1
-                const std::size_t addr = ptr - start_address;
+                const std::size_t drift = (ptr - start_address) % granularity;
+                const std::size_t addr = (ptr - start_address) / granularity * granularity;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : 0;
                 const std::size_t pagenum = lessaddr / granularity;
-                const std::size_t offset = (addr > 0 && homenode(ptr) == 0)
-                ? pagenum / nodes * granularity + granularity
-                : pagenum / nodes * granularity;
+                const std::size_t offset = (addr >= granularity && homenode(ptr) == 0)
+                ? pagenum / nodes * granularity + granularity + drift
+                : pagenum / nodes * granularity + drift;
             #elif ARGO_MEM_ALLOC_POLICY == 2
                 static const std::size_t pageblock = PAGE_BLOCK * granularity;
-                const std::size_t addr = ptr - start_address;
+                const std::size_t drift = (ptr - start_address) % granularity;
+                const std::size_t addr = (ptr - start_address) / granularity * granularity;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : 0;
                 const std::size_t pagenum = lessaddr / pageblock;
-                const std::size_t offset = (addr > 0 && homenode(ptr) == 0)
-                ? pagenum / nodes * pageblock + lessaddr % pageblock + granularity
-                : pagenum / nodes * pageblock + lessaddr % pageblock;
+                const std::size_t offset = (addr >= granularity && homenode(ptr) == 0)
+                ? pagenum / nodes * pageblock + lessaddr % pageblock + granularity + drift
+                : pagenum / nodes * pageblock + lessaddr % pageblock + drift;
             #elif ARGO_MEM_ALLOC_POLICY == 3
-                const std::size_t addr = ptr - start_address;
+                const std::size_t drift = (ptr - start_address) % granularity;
+                const std::size_t addr = (ptr - start_address) / granularity * granularity;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : 0;
                 const std::size_t pagenum = lessaddr / granularity;
-                const std::size_t offset = (addr > 0 && homenode(ptr) == 0)
-                ? pagenum / nodes * granularity + granularity
-                : pagenum / nodes * granularity;
+                const std::size_t offset = (addr >= granularity && homenode(ptr) == 0)
+                ? pagenum / nodes * granularity + granularity + drift
+                : pagenum / nodes * granularity + drift;
             #elif ARGO_MEM_ALLOC_POLICY == 4
                 static const std::size_t pageblock = PAGE_BLOCK * granularity;
-                const std::size_t addr = ptr - start_address;
+                const std::size_t drift = (ptr - start_address) % granularity;
+                std::size_t addr = (ptr - start_address) / granularity * granularity;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : 0;
                 const std::size_t pagenum = lessaddr / pageblock;
-                const std::size_t offset = (addr > 0 && homenode(ptr) == 0)
-                ? pagenum / nodes * pageblock + lessaddr % pageblock + granularity
-                : pagenum / nodes * pageblock + lessaddr % pageblock;
+                const std::size_t offset = (addr >= granularity && homenode(ptr) == 0)
+                ? pagenum / nodes * pageblock + lessaddr % pageblock + granularity + drift
+                : pagenum / nodes * pageblock + lessaddr % pageblock + drift;
             #elif ARGO_MEM_ALLOC_POLICY == 5
                 static const std::size_t prime = (3 * nodes) / 2;
-                std::size_t addr = ptr - start_address;
+                const std::size_t drift = (ptr - start_address) % granularity;
+                std::size_t addr = (ptr - start_address) / granularity * granularity;
                 std::size_t offset, lessaddr = (addr >= granularity) ? addr - granularity : 0;
                 std::size_t pagenum = lessaddr / granularity;
-                if ((addr <= (nodes * granularity)) || ((pagenum % prime) >= nodes))
-                    offset = (pagenum / nodes) * granularity + (addr > 0 && !homenode(ptr)) * granularity;
+                if ((addr <= (nodes * granularity)) || ((pagenum % prime) >= (std::size_t)nodes))
+                    offset = (pagenum / nodes) * granularity + (addr > 0 && !homenode(ptr)) * granularity + drift;
                 else {
                     node_id_t currhome;
                     std::size_t homecounter = 0;
@@ -185,9 +194,9 @@ namespace argo {
                         currhome = homenode(static_cast<char*>(start_address) + addr);
                         homecounter += (currhome == realhome) ? 1 : 0;
                         if (((addr <= (nodes * granularity)) && (currhome == realhome)) ||
-                            (((pagenum % prime) >= nodes) && (currhome == realhome))) {
+                            (((pagenum % prime) >= (std::size_t)nodes) && (currhome == realhome))) {
                             offset = (pagenum / nodes) * granularity + !realhome * granularity;
-                            offset += homecounter * granularity;
+                            offset += homecounter * granularity + drift;
                             break;
                         }
                     }
@@ -195,11 +204,12 @@ namespace argo {
             #elif ARGO_MEM_ALLOC_POLICY == 6
                 static const std::size_t pageblock = PAGE_BLOCK * granularity;
                 static const std::size_t prime = (3 * nodes) / 2;
-                std::size_t addr = ptr - start_address;
+                const std::size_t drift = (ptr - start_address) % granularity;
+                std::size_t addr = (ptr - start_address) / granularity * granularity;
                 std::size_t offset, lessaddr = (addr >= granularity) ? addr - granularity : 0;
                 std::size_t pagenum = lessaddr / pageblock;
-                if ((addr <= (nodes * pageblock)) || ((pagenum % prime) >= nodes))
-                    offset = (pagenum / nodes) * pageblock + lessaddr % pageblock + (addr > 0 && !homenode(ptr)) * granularity;
+                if ((addr <= (nodes * pageblock)) || ((pagenum % prime) >= (std::size_t)nodes))
+                    offset = (pagenum / nodes) * pageblock + lessaddr % pageblock + (addr > 0 && !homenode(ptr)) * granularity + drift;
                 else {
                     node_id_t currhome;
                     std::size_t homecounter = 0;
@@ -210,17 +220,18 @@ namespace argo {
                         currhome = homenode(static_cast<char*>(start_address) + addr);
                         homecounter += (currhome == realhome) ? 1 : 0;
                         if (((addr <= (nodes * pageblock)) && (currhome == realhome)) || 
-                            (((pagenum % prime) >= nodes) && (currhome == realhome))) {
+                            (((pagenum % prime) >= (std::size_t)nodes) && (currhome == realhome))) {
                             offset = (pagenum / nodes) * pageblock + lessaddr % pageblock + !realhome * granularity;
-                            offset += homecounter * pageblock;
+                            offset += homecounter * pageblock + drift;
                             break;
                         }
                     }
                 }
             #elif ARGO_MEM_ALLOC_POLICY == 7
                 const std::size_t addr = ptr - start_address;
+                const std::size_t drift = addr % granularity;
                 const std::size_t index = 2 * (addr / granularity);
-                const std::size_t offset = globalOwners[index + 1];
+                const std::size_t offset = globalOwners[index + 1] + drift;
             #endif
 
             if(offset >=(std::size_t)size_per_node){
