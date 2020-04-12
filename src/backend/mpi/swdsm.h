@@ -319,10 +319,11 @@ unsigned long getCacheIndex(unsigned long addr);
  * @param addr Address in the global address space
  * @return Process ID of the node backing the memory containing addr
  */
-unsigned long getHomenode(unsigned long addr);
+unsigned long getHomenode(unsigned long addr, int cloc = 0);
 /**
  * @brief Gets the offset of an address on the local nodes part of the global memory
  * @param addr Address in the global address space
+ * @param cloc Can be used to identify the call location in the code
  * @return addr-(start address of local process part of global memory)
  */
 unsigned long getOffset(unsigned long addr);

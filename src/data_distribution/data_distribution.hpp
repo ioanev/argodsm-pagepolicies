@@ -14,16 +14,16 @@
 
 /**
  * @brief Compiler directive for selecting the memory allocation policy
- * 0 : Bind-All memory allocation policy
- * 1 : Cyclic memory allocation policy
- * 2 : Cyclic-Block memory allocation policy
- * 3 : Skew-Mapp memory allocation policy
- * 4 : Skew-Mapp-Block memory allocation policy
- * 5 : Prime-Mapp memory allocation policy
- * 6 : Prime-Mapp-Block memory allocation policy
- * 7 : First-Touch memory allocation policy
+ * 0 : Bind-All
+ * 1 : Cyclic
+ * 2 : Cyclic-Block
+ * 3 : Skew-Mapp
+ * 4 : Skew-Mapp-Block
+ * 5 : Prime-Mapp
+ * 6 : Prime-Mapp-Block
+ * 7 : First-Touch
  */
-#define ARGO_MEM_ALLOC_POLICY 7
+#define MEM_POLICY 7
 
 /** @brief Page block size for the block policies */
 #define PAGE_BLOCK 4
@@ -146,9 +146,7 @@ namespace argo {
 				 * @param addr Address in the global address 
 				 * @return The homenode of addr
 				 */
-			#if ARGO_MEM_ALLOC_POLICY == 7
 				static std::size_t firstTouch (const std::size_t& addr);
-			#endif
 
 				/**
 				 * @brief compute home node of an address

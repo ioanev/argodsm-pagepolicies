@@ -143,7 +143,6 @@ unsigned long GLOBAL_NULL;
 argo_statistics stats;
 
 /*Policies*/
-#if ARGO_MEM_ALLOC_POLICY == 7
 /** @brief  Holds the owner of a page */
 unsigned long *globalOwners;
 /** @brief  Size of the owner directory */
@@ -154,7 +153,8 @@ unsigned long ownerOffset;
 MPI_Win ownerWindow;
 /** @brief  Protects the owner directory */
 pthread_mutex_t ownermutex = PTHREAD_MUTEX_INITIALIZER;
-#endif
+/** @brief  Spinlock to avoid "spinning" on the semaphore */
+pthread_mutex_t spinmutex = PTHREAD_MUTEX_INITIALIZER;
 
 namespace {
 	/** @brief constant for invalid ArgoDSM node */
@@ -340,7 +340,7 @@ void handler(int sig, siginfo_t *si, void *unused){
 	/* compute start pointer of cacheline. char* has byte-wise arithmetics */
 	char* const aligned_access_ptr = static_cast<char*>(startAddr) + aligned_access_offset;
 	unsigned long startIndex = getCacheIndex(aligned_access_offset);
-	unsigned long homenode = getHomenode(aligned_access_offset);
+	unsigned long homenode = getHomenode(aligned_access_offset, MEM_POLICY);
 	unsigned long offset = getOffset(aligned_access_offset);
 	unsigned long id = 1 << getID();
 	unsigned long invid = ~id;
@@ -513,8 +513,19 @@ void handler(int sig, siginfo_t *si, void *unused){
 }
 
 
-unsigned long getHomenode(unsigned long addr){
+unsigned long getHomenode(unsigned long addr, int cloc){
+	if (cloc == 7) {
+		pthread_mutex_lock(&spinmutex);
+    	sem_wait(&ibsem);
+	}
+
 	dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)));
+	
+	if (cloc == 7) {
+	    sem_post(&ibsem);
+		pthread_mutex_unlock(&spinmutex);
+	}
+	
 	return gptr.node();
 }
 
@@ -954,7 +965,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	writebufferstart = 0;
 	writebufferend = 0;
 
-#if ARGO_MEM_ALLOC_POLICY == 7
+#if MEM_POLICY == 7
 	ownerOffset = 0;
 #endif
 
@@ -996,7 +1007,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	unsigned long cacheControlSize = sizeof(control_data)*cachesize;
 	unsigned long gwritersize = classificationSize*sizeof(long);
 
-#if ARGO_MEM_ALLOC_POLICY == 7
+#if MEM_POLICY == 7
 	ownerSize = argo_size;
 	ownerSize += pagesize;
 	ownerSize /= pagesize;
@@ -1033,7 +1044,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	pagecopy = static_cast<char*>(vm::allocate_mappable(pagesize, cachesize*pagesize));
 	globalSharers = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, gwritersize));
 
-#if ARGO_MEM_ALLOC_POLICY == 7
+#if MEM_POLICY == 7
 	globalOwners = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, ownerSizeBytes));
 #endif
 
@@ -1063,7 +1074,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	tmpcache=lockbuffer;
 	vm::map_memory(tmpcache, pagesize, current_offset, PROT_READ|PROT_WRITE);
 
-#if ARGO_MEM_ALLOC_POLICY == 7
+#if MEM_POLICY == 7
 	current_offset += pagesize;
 	tmpcache=globalOwners;
 	vm::map_memory(tmpcache, ownerSizeBytes, current_offset, PROT_READ|PROT_WRITE);
@@ -1084,7 +1095,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 								 MPI_INFO_NULL, MPI_COMM_WORLD, &sharerWindow);
 	MPI_Win_create(lockbuffer, pagesize, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &lockWindow);
 
-#if ARGO_MEM_ALLOC_POLICY == 7
+#if MEM_POLICY == 7
 	MPI_Win_create(globalOwners, ownerSizeBytes, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &ownerWindow);
 #endif
 
@@ -1096,7 +1107,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	memset(globalSharers, 0, gwritersize);
 	memset(cacheControl, 0, cachesize*sizeof(control_data));
 
-#if ARGO_MEM_ALLOC_POLICY == 7
+#if MEM_POLICY == 7
 	memset(globalOwners, 0, ownerSizeBytes);
 #endif
 
@@ -1131,7 +1142,7 @@ void argo_finalize(){
 	}
 	MPI_Win_free(&sharerWindow);
 
-#if ARGO_MEM_ALLOC_POLICY == 7
+#if MEM_POLICY == 7
 	MPI_Win_free(&ownerWindow);
 #endif
 
@@ -1230,7 +1241,7 @@ void argo_reset_coherence(int n){
 	}
 	MPI_Win_unlock(workrank, sharerWindow);
 
-#if ARGO_MEM_ALLOC_POLICY == 7
+#if MEM_POLICY == 7
 	MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, ownerWindow);
 	globalOwners[0] = 0x1;
 	globalOwners[1] = 0x0;
