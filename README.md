@@ -21,4 +21,4 @@ page-based memory allocation policies (implementation is under the data_distribu
 - 4 : Skew-Mapp-Block
 - 5 : Prime-Mapp
 - 6 : Prime-Mapp-Block
-- 7 : First-Touch (buggy)
+- 7 : First-Touch
