@@ -29,7 +29,7 @@ namespace argo {
             const std::size_t id = 1 << workrank;
             const std::size_t index = 2 * (addr / granularity);
 
-            pthread_mutex_lock(&ownermutex);
+            //pthread_mutex_lock(&ownermutex);
             
             // Check/try to acquire ownership of the page.
             MPI_Win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, ownerWindow);
@@ -63,7 +63,7 @@ namespace argo {
             } else
                 homenode = result;
                         
-            pthread_mutex_unlock(&ownermutex);
+            //pthread_mutex_unlock(&ownermutex);
 
             return homenode;
         }
@@ -115,10 +115,12 @@ namespace argo {
             #elif MEM_POLICY == 7
                 const std::size_t addr = ptr - start_address;
                 const std::size_t index = 2 * (addr / granularity);
+                pthread_mutex_lock(&ownermutex);
+                MPI_Win_lock(MPI_LOCK_SHARED, workrank, 0, ownerWindow);
                 node_id_t homenode = globalOwners[index];
-                
-                if (!homenode)
-                    homenode = firstTouch(addr);
+                MPI_Win_unlock(workrank, ownerWindow);
+                if (!homenode) homenode = firstTouch(addr);
+                pthread_mutex_unlock(&ownermutex);
 
                 int n;
                 for(n = 0; n < nodes; n++)
@@ -226,7 +228,11 @@ namespace argo {
                 const std::size_t addr = ptr - start_address;
                 const std::size_t drift = addr % granularity;
                 const std::size_t index = 2 * (addr / granularity);
+                pthread_mutex_lock(&ownermutex);
+                MPI_Win_lock(MPI_LOCK_SHARED, workrank, 0, ownerWindow);
                 const std::size_t offset = globalOwners[index + 1] + drift;
+                MPI_Win_unlock(workrank, ownerWindow);
+                pthread_mutex_unlock(&ownermutex);
             #endif
 
             if(offset >=(std::size_t)size_per_node){

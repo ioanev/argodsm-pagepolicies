@@ -341,7 +341,7 @@ void handler(int sig, siginfo_t *si, void *unused){
 	char* const aligned_access_ptr = static_cast<char*>(startAddr) + aligned_access_offset;
 	unsigned long startIndex = getCacheIndex(aligned_access_offset);
 	unsigned long homenode = getHomenode(aligned_access_offset, MEM_POLICY);
-	unsigned long offset = getOffset(aligned_access_offset);
+	unsigned long offset = getOffset(aligned_access_offset, MEM_POLICY);
 	unsigned long id = 1 << getID();
 	unsigned long invid = ~id;
 
@@ -517,21 +517,32 @@ unsigned long getHomenode(unsigned long addr, int cloc){
 	if (cloc == 7) {
 		pthread_mutex_lock(&spinmutex);
     	sem_wait(&ibsem);
-	}
-
-	dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)));
-	
-	if (cloc == 7) {
+		dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 0);
+		addr = gptr.node();
 	    sem_post(&ibsem);
 		pthread_mutex_unlock(&spinmutex);
+	} else {
+		dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 0);
+		addr = gptr.node();
 	}
 	
-	return gptr.node();
+	return addr;
 }
 
-unsigned long getOffset(unsigned long addr){
-	dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)));
-	return gptr.offset();
+unsigned long getOffset(unsigned long addr, int cloc){
+	if (cloc == 7) {
+		pthread_mutex_lock(&spinmutex);
+    	sem_wait(&ibsem);
+		dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 1);
+		addr = gptr.offset();
+	    sem_post(&ibsem);
+		pthread_mutex_unlock(&spinmutex);
+	} else {
+		dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 1);
+		addr = gptr.offset();
+	}
+
+	return addr;
 }
 
 void write_back_writebuffer() {

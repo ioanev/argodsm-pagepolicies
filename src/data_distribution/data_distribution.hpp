@@ -26,7 +26,7 @@
 #define MEM_POLICY 7
 
 /** @brief Page block size for the block policies */
-#define PAGE_BLOCK 4
+#define PAGE_BLOCK 16
 
 namespace argo {
 	namespace data_distribution {		
@@ -53,12 +53,25 @@ namespace argo {
 				/**
 				 * @brief construct from virtual address pointer
 				 * @param ptr pointer to construct from
+				 * @param sel info about the address, its homenode{0}, its local_offset{1}, or both{2}
 				 * @todo implement
 				 */
-				global_ptr(T* ptr)
-					: homenode(Dist::homenode(reinterpret_cast<char*>(ptr))),
-					  local_offset(Dist::local_offset(reinterpret_cast<char*>(ptr)))
-					{}
+				global_ptr(T* ptr, int sel = 2) {
+					switch (sel) {
+						case 0:
+							homenode = Dist::homenode(reinterpret_cast<char*>(ptr));
+							local_offset = 0;
+							break;
+						case 1:
+							local_offset = Dist::local_offset(reinterpret_cast<char*>(ptr));
+							homenode = -1;
+							break;
+						default:
+							homenode = Dist::homenode(reinterpret_cast<char*>(ptr));
+							local_offset = Dist::local_offset(reinterpret_cast<char*>(ptr));
+							break;
+					}
+				}
 
 				/**
 				 * @brief Copy constructor between different pointer types

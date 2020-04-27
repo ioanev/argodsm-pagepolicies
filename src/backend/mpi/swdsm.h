@@ -326,10 +326,11 @@ unsigned long getHomenode(unsigned long addr, int cloc = 0);
  * @param cloc Can be used to identify the call location in the code
  * @return addr-(start address of local process part of global memory)
  */
-unsigned long getOffset(unsigned long addr);
+unsigned long getOffset(unsigned long addr, int cloc = 0);
 /**
  * @brief Gives an index to the sharer/writer vector depending on the address
  * @param addr Address in the global address space
+ * @param cloc Can be used to identify the call location in the code
  * @return index for sharer vector for the page
  */
 inline unsigned long get_classification_index(uint64_t addr);
