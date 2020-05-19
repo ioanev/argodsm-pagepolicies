@@ -1224,7 +1224,37 @@ void swdsm_argo_barrier(int n){ //BARRIER
 		pthread_mutex_lock(&cachemutex);
 		sem_wait(&ibsem);
 		flushWriteBuffer();
-		MPI_Barrier(workcomm);
+		////////////////////////////////////////////
+		//MPI_Barrier(workcomm);
+
+		// Global values.
+		bool gflagval;
+		std::size_t gcurrval;
+
+		// Local values.
+		static bool flagdir = false;
+		constexpr std::size_t zeroval = 0;
+		constexpr std::size_t incrval = 1;
+
+		flagdir = !flagdir;
+		MPI_Win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, globalDataWindow[0]);
+		MPI_Fetch_and_op(&incrval, &gcurrval, MPI_LONG, 0, 16, MPI_SUM, globalDataWindow[0]);
+		MPI_Win_unlock(0, globalDataWindow[0]);
+
+		if (gcurrval == numtasks - 1) {
+			MPI_Win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, globalDataWindow[0]);
+			MPI_Accumulate(&zeroval, 1, MPI_LONG, 0, 16, 1, MPI_LONG, MPI_REPLACE, globalDataWindow[0]);
+			MPI_Accumulate(&flagdir, 1, MPI_BYTE, 0, 24, 1, MPI_BYTE, MPI_REPLACE, globalDataWindow[0]);
+			MPI_Win_unlock(0, globalDataWindow[0]);
+		} else {
+			do {
+				MPI_Win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, globalDataWindow[0]);
+				MPI_Get_accumulate(NULL, 0, MPI_BYTE, &gflagval, 1, MPI_BYTE, 0, 24, 1, MPI_BYTE, MPI_NO_OP, globalDataWindow[0]);
+				MPI_Win_unlock(0, globalDataWindow[0]);
+			} while (gflagval != flagdir);
+		}
+
+		////////////////////////////////////////////
 		self_invalidation();
 		sem_post(&ibsem);
 		pthread_mutex_unlock(&cachemutex);

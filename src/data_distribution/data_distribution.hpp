@@ -23,7 +23,7 @@
  * 6 : Prime-Mapp-Block
  * 7 : First-Touch
  */
-#define MEM_POLICY 7
+#define MEM_POLICY 1
 
 /** @brief Page block size for the block policies */
 #define PAGE_BLOCK 16
