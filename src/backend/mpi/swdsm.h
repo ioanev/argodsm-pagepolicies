@@ -303,6 +303,10 @@ void init_mpi_struct(void);
  */
 void init_mpi_cacheblock(void);
 /**
+ * @brief Naive barrier implementation
+ */
+void naive_rma_barrier(void);
+/**
  * @brief Checks if something is power of 2
  * @param x a non-negative integer
  * @return 1 if x is 0 or a power of 2, otherwise return 0

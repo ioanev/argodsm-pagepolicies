@@ -1207,26 +1207,7 @@ void self_invalidation(){
 	stats.selfinvtime += (t2-t1);
 }
 
-void swdsm_argo_barrier(int n){ //BARRIER
-	double time1,time2;
-	pthread_t barrierlockholder;
-	time1 = MPI_Wtime();
-	pthread_barrier_wait(&threadbarrier[n]);
-	if(argo_get_nodes()==1){
-		time2 = MPI_Wtime();
-		stats.barriers++;
-		stats.barriertime += (time2-time1);
-		return;
-	}
-
-	if(pthread_mutex_trylock(&barriermutex) == 0){
-		barrierlockholder = pthread_self();
-		pthread_mutex_lock(&cachemutex);
-		sem_wait(&ibsem);
-		flushWriteBuffer();
-		////////////////////////////////////////////
-		//MPI_Barrier(workcomm);
-
+void naive_rma_barrier(void) {
 		// Global values.
 		bool gflagval;
 		std::size_t gcurrval;
@@ -1253,8 +1234,27 @@ void swdsm_argo_barrier(int n){ //BARRIER
 				MPI_Win_unlock(0, globalDataWindow[0]);
 			} while (gflagval != flagdir);
 		}
+}
 
-		////////////////////////////////////////////
+void swdsm_argo_barrier(int n){ //BARRIER
+	double time1,time2;
+	pthread_t barrierlockholder;
+	time1 = MPI_Wtime();
+	pthread_barrier_wait(&threadbarrier[n]);
+	if(argo_get_nodes()==1){
+		time2 = MPI_Wtime();
+		stats.barriers++;
+		stats.barriertime += (time2-time1);
+		return;
+	}
+
+	if(pthread_mutex_trylock(&barriermutex) == 0){
+		barrierlockholder = pthread_self();
+		pthread_mutex_lock(&cachemutex);
+		sem_wait(&ibsem);
+		flushWriteBuffer();
+		//MPI_Barrier(workcomm);
+		naive_rma_barrier();
 		self_invalidation();
 		sem_post(&ibsem);
 		pthread_mutex_unlock(&cachemutex);
