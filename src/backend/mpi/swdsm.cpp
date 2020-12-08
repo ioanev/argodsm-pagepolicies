@@ -10,9 +10,10 @@
 #include "data_distribution/data_distribution.hpp"
 #include "swdsm.h"
 
-namespace dm = argo::data_distribution;
+namespace dd = argo::data_distribution;
 namespace vm = argo::virtual_memory;
 namespace sig = argo::signal;
+namespace env = argo::env;
 
 /*Treads*/
 /** @brief Thread loads data into cache */
@@ -340,12 +341,10 @@ void handler(int sig, siginfo_t *si, void *unused){
 	/* compute start pointer of cacheline. char* has byte-wise arithmetics */
 	char* const aligned_access_ptr = static_cast<char*>(startAddr) + aligned_access_offset;
 	unsigned long startIndex = getCacheIndex(aligned_access_offset);
-	unsigned long homenode = getHomenode(aligned_access_offset, MEM_POLICY);
-	unsigned long offset = getOffset(aligned_access_offset, MEM_POLICY);
+	unsigned long homenode = getHomenode(aligned_access_offset, env::memory_policy());
+	unsigned long offset = getOffset(aligned_access_offset, env::memory_policy());
 	unsigned long id = 1 << getID();
 	unsigned long invid = ~id;
-
-	//printf("Process: %i, addr: 0x%X, homenode: %lu, offset: 0x%X\n", workrank, (int)aligned_access_offset, homenode, (int)offset);
 
 	pthread_mutex_lock(&cachemutex);
 
@@ -517,12 +516,12 @@ unsigned long getHomenode(unsigned long addr, int cloc){
 	if (cloc == 7) {
 		pthread_mutex_lock(&spinmutex);
     	sem_wait(&ibsem);
-		dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 0);
+		dd::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 0);
 		addr = gptr.node();
 	    sem_post(&ibsem);
 		pthread_mutex_unlock(&spinmutex);
 	} else {
-		dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 0);
+		dd::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 0);
 		addr = gptr.node();
 	}
 	
@@ -533,12 +532,12 @@ unsigned long getOffset(unsigned long addr, int cloc){
 	if (cloc == 7) {
 		pthread_mutex_lock(&spinmutex);
     	sem_wait(&ibsem);
-		dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 1);
+		dd::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 1);
 		addr = gptr.offset();
 	    sem_post(&ibsem);
 		pthread_mutex_unlock(&spinmutex);
 	} else {
-		dm::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 1);
+		dd::global_ptr<char> gptr(reinterpret_cast<char*>(addr + reinterpret_cast<unsigned long>(startAddr)), 1);
 		addr = gptr.offset();
 	}
 
@@ -935,6 +934,9 @@ void * argo_gmalloc(unsigned long size){
 }
 
 void argo_initialize(std::size_t argo_size, std::size_t cache_size){
+	printf("ARGO_MEMORY_SIZE %lu, ARGO_CACHE_SIZE %lu\n", argo_size, cache_size);
+	printf("ARGO_MEMORY_POLICY %lu, ARGO_BLOCK_SIZE %lu\n", env::memory_policy(), env::page_size());
+
 	int i;
 	unsigned long j;
 	initmpi();
@@ -976,9 +978,8 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	writebufferstart = 0;
 	writebufferend = 0;
 
-#if MEM_POLICY == 7
+if (env::memory_policy() == 7)
 	ownerOffset = 0;
-#endif
 
 	barwindowsused = (char *)malloc(numtasks*sizeof(char));
 	for(i = 0; i < numtasks; i++){
@@ -1018,7 +1019,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	unsigned long cacheControlSize = sizeof(control_data)*cachesize;
 	unsigned long gwritersize = classificationSize*sizeof(long);
 
-#if MEM_POLICY == 7
+//if (env::memory_policy() == 7) {
 	ownerSize = argo_size;
 	ownerSize += pagesize;
 	ownerSize /= pagesize;
@@ -1028,7 +1029,7 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	ownerSizeBytes /= pagesize;
 	ownerSizeBytes += 1;
 	ownerSizeBytes *= pagesize;
-#endif
+//}
 
 	cacheControlSize /= pagesize;
 	gwritersize /= pagesize;
@@ -1055,9 +1056,8 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	pagecopy = static_cast<char*>(vm::allocate_mappable(pagesize, cachesize*pagesize));
 	globalSharers = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, gwritersize));
 
-#if MEM_POLICY == 7
+if (env::memory_policy() == 7)
 	globalOwners = static_cast<unsigned long*>(vm::allocate_mappable(pagesize, ownerSizeBytes));
-#endif
 
 	char processor_name[MPI_MAX_PROCESSOR_NAME];
 	int name_len;
@@ -1085,11 +1085,11 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	tmpcache=lockbuffer;
 	vm::map_memory(tmpcache, pagesize, current_offset, PROT_READ|PROT_WRITE);
 
-#if MEM_POLICY == 7
+if (env::memory_policy() == 7) {
 	current_offset += pagesize;
 	tmpcache=globalOwners;
 	vm::map_memory(tmpcache, ownerSizeBytes, current_offset, PROT_READ|PROT_WRITE);
-#endif
+}
 
 	sem_init(&ibsem,0,1);
 	sem_init(&globallocksem,0,1);
@@ -1106,9 +1106,8 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 								 MPI_INFO_NULL, MPI_COMM_WORLD, &sharerWindow);
 	MPI_Win_create(lockbuffer, pagesize, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &lockWindow);
 
-#if MEM_POLICY == 7
+if (env::memory_policy() == 7)
 	MPI_Win_create(globalOwners, ownerSizeBytes, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &ownerWindow);
-#endif
 
 	memset(pagecopy, 0, cachesize*pagesize);
 	memset(touchedcache, 0, cachesize);
@@ -1118,9 +1117,8 @@ void argo_initialize(std::size_t argo_size, std::size_t cache_size){
 	memset(globalSharers, 0, gwritersize);
 	memset(cacheControl, 0, cachesize*sizeof(control_data));
 
-#if MEM_POLICY == 7
+if (env::memory_policy() == 7)
 	memset(globalOwners, 0, ownerSizeBytes);
-#endif
 
 	for(j=0; j<cachesize; j++){
 		cacheControl[j].tag = GLOBAL_NULL;
@@ -1153,9 +1151,8 @@ void argo_finalize(){
 	}
 	MPI_Win_free(&sharerWindow);
 
-#if MEM_POLICY == 7
+if (env::memory_policy() == 7)
 	MPI_Win_free(&ownerWindow);
-#endif
 
 	MPI_Win_free(&lockWindow);
 	MPI_Comm_free(&workcomm);
@@ -1252,7 +1249,7 @@ void argo_reset_coherence(int n){
 	}
 	MPI_Win_unlock(workrank, sharerWindow);
 
-#if MEM_POLICY == 7
+if (env::memory_policy() == 7) {
 	MPI_Win_lock(MPI_LOCK_EXCLUSIVE, workrank, 0, ownerWindow);
 	globalOwners[0] = 0x1;
 	globalOwners[1] = 0x0;
@@ -1260,7 +1257,7 @@ void argo_reset_coherence(int n){
 		globalOwners[j] = 0;
 	MPI_Win_unlock(workrank, ownerWindow);
 	ownerOffset = (workrank == 0) ? pagesize : 0;
-#endif
+}
 
 	sem_post(&ibsem);
 	swdsm_argo_barrier(n);

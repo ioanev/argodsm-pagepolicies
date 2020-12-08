@@ -50,6 +50,20 @@ namespace argo {
 		 * @see @ref ARGO_CACHE_SIZE
 		 */
 		std::size_t cache_size();
+
+		/**
+		 * @brief get the memory policy requested by environment variable
+		 * @return the requested memory policy in number (0-7)
+		 * @see @ref ARGO_MEMORY_POLICY
+		 */
+		std::size_t memory_policy();
+
+		/**
+		 * @brief get the page size requested by environment variable
+		 * @return the requested page size in number of pages
+		 * @see @ref ARGO_BLOCK_SIZE
+		 */
+		std::size_t page_size();
 	} // namespace env
 } // namespace argo
 

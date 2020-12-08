@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <mpi.h>
 
+namespace env = argo::env;
+
 /** @brief Page size local to this file for the implementations */
 static constexpr std::size_t granularity = 0x1000UL;
 
@@ -15,7 +17,7 @@ extern std::size_t ownerOffset;
 extern MPI_Win ownerWindow;
 /** @brief  Protects the owner directory */
 extern pthread_mutex_t ownermutex;
-/** @brief  More useful variables */
+/** @brief  Rank/process ID in the MPI/ArgoDSM runtime */
 extern int workrank;
 
 namespace argo {
@@ -28,8 +30,6 @@ namespace argo {
             constexpr std::size_t compare = 0;
             const std::size_t id = 1 << workrank;
             const std::size_t index = 2 * (addr / granularity);
-
-            //pthread_mutex_lock(&ownermutex);
             
             // Check/try to acquire ownership of the page.
             MPI_Win_lock(MPI_LOCK_EXCLUSIVE, 0, 0, ownerWindow);
@@ -63,67 +63,66 @@ namespace argo {
             } else
                 homenode = result;
                         
-            //pthread_mutex_unlock(&ownermutex);
-
             return homenode;
         }
 
         template<>
         node_id_t naive_data_distribution<0>::homenode (char* const ptr) {
-            #if   MEM_POLICY == 0
+            node_id_t homenode;
+            if (env::memory_policy() == 0) {
                 const std::size_t addr = ptr - start_address;
-                const node_id_t homenode = addr / size_per_node;
-            #elif MEM_POLICY == 1
+                homenode = addr / size_per_node;
+            } else if (env::memory_policy() == 1) {
                 static constexpr std::size_t zero = 0;
                 const std::size_t addr = ptr - start_address;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / granularity;
-                const node_id_t homenode = pagenum % nodes;
-            #elif MEM_POLICY == 2
+                homenode = pagenum % nodes;
+            } else if (env::memory_policy() == 2) {
                 static constexpr std::size_t zero = 0;
-                static const std::size_t pageblock = PAGE_BLOCK * granularity;
+                static const std::size_t pageblock = env::page_size() * granularity;
                 const std::size_t addr = ptr - start_address;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / pageblock;
-                const node_id_t homenode = pagenum % nodes;
-            #elif MEM_POLICY == 3
+                homenode = pagenum % nodes;
+            } else if (env::memory_policy() == 3) {
                 static const std::size_t zero = (nodes - 1) * granularity;
                 const std::size_t addr = ptr - start_address;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / granularity;
-                const node_id_t homenode = (pagenum + pagenum / nodes + 1) % nodes;
-            #elif MEM_POLICY == 4
-                static const std::size_t pageblock = PAGE_BLOCK * granularity;
+                homenode = (pagenum + pagenum / nodes + 1) % nodes;
+            } else if (env::memory_policy() == 4) {
+                static const std::size_t pageblock = env::page_size() * granularity;
                 static const std::size_t zero = (nodes - 1) * pageblock;
                 const std::size_t addr = ptr - start_address;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / pageblock;
-                const node_id_t homenode = (pagenum + pagenum / nodes + 1) % nodes;
-            #elif MEM_POLICY == 5
+                homenode = (pagenum + pagenum / nodes + 1) % nodes;
+            } else if (env::memory_policy() == 5) {
                 static constexpr std::size_t zero = 0;
                 static const std::size_t prime = (3 * nodes) / 2;
                 const std::size_t addr = ptr - start_address;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / granularity;
-                const node_id_t homenode = ((pagenum % prime) >= (std::size_t)nodes)
+                homenode = ((pagenum % prime) >= (std::size_t)nodes)
                 ? ((pagenum / prime) * (prime - nodes) + ((pagenum % prime) - nodes)) % nodes
                 : pagenum % prime;
-            #elif MEM_POLICY == 6
+            } else if (env::memory_policy() == 6) {
                 static constexpr std::size_t zero = 0;
-                static const std::size_t pageblock = PAGE_BLOCK * granularity;
+                static const std::size_t pageblock = env::page_size() * granularity;
                 static const std::size_t prime = (3 * nodes) / 2;
                 const std::size_t addr = ptr - start_address;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / pageblock;
-                const node_id_t homenode = ((pagenum % prime) >= (std::size_t)nodes)
+                homenode = ((pagenum % prime) >= (std::size_t)nodes)
                 ? ((pagenum / prime) * (prime - nodes) + ((pagenum % prime) - nodes)) % nodes
                 : pagenum % prime;
-            #elif MEM_POLICY == 7
+            } else if (env::memory_policy() == 7) {
                 const std::size_t addr = ptr - start_address;
                 const std::size_t index = 2 * (addr / granularity);
                 pthread_mutex_lock(&ownermutex);
                 MPI_Win_lock(MPI_LOCK_SHARED, workrank, 0, ownerWindow);
-                node_id_t homenode = globalOwners[index];
+                homenode = globalOwners[index];
                 MPI_Win_unlock(workrank, ownerWindow);
                 if (!homenode) homenode = firstTouch(addr);
                 pthread_mutex_unlock(&ownermutex);
@@ -132,7 +131,7 @@ namespace argo {
                 for(n = 0; n < nodes; n++)
                     if((1 << n) == homenode)
                         homenode = n;
-            #endif
+            }
 
             if(homenode >=nodes){
                 exit(EXIT_FAILURE);
@@ -142,53 +141,54 @@ namespace argo {
 
         template<>
         std::size_t naive_data_distribution<0>::local_offset (char* const ptr) {
-            #if   MEM_POLICY == 0
+            std::size_t offset;
+            if (env::memory_policy() == 0) {
                 const std::size_t addr = ptr - start_address;
-                const std::size_t offset = addr - (homenode(ptr)) * size_per_node;
-            #elif MEM_POLICY == 1
+                offset = addr - (homenode(ptr)) * size_per_node;
+            } else if (env::memory_policy() == 1) {
                 static constexpr std::size_t zero = 0;
                 const std::size_t drift = (ptr - start_address) % granularity;
                 const std::size_t addr = (ptr - start_address) / granularity * granularity;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / granularity;
-                const std::size_t offset = (addr >= granularity && homenode(ptr) == 0)
+                offset = (addr >= granularity && homenode(ptr) == 0)
                 ? pagenum / nodes * granularity + granularity + drift
                 : pagenum / nodes * granularity + drift;
-            #elif MEM_POLICY == 2
+            } else if (env::memory_policy() == 2) {
                 static constexpr std::size_t zero = 0;
-                static const std::size_t pageblock = PAGE_BLOCK * granularity;
+                static const std::size_t pageblock = env::page_size() * granularity;
                 const std::size_t drift = (ptr - start_address) % granularity;
                 const std::size_t addr = (ptr - start_address) / granularity * granularity;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / pageblock;
-                const std::size_t offset = (addr >= granularity && homenode(ptr) == 0)
+                offset = (addr >= granularity && homenode(ptr) == 0)
                 ? pagenum / nodes * pageblock + lessaddr % pageblock + granularity + drift
                 : pagenum / nodes * pageblock + lessaddr % pageblock + drift;
-            #elif MEM_POLICY == 3
+            } else if (env::memory_policy() == 3) {
                 static constexpr std::size_t zero = 0;
                 const std::size_t drift = (ptr - start_address) % granularity;
                 const std::size_t addr = (ptr - start_address) / granularity * granularity;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / granularity;
-                const std::size_t offset = (addr >= granularity && homenode(ptr) == 0)
+                offset = (addr >= granularity && homenode(ptr) == 0)
                 ? pagenum / nodes * granularity + granularity + drift
                 : pagenum / nodes * granularity + drift;
-            #elif MEM_POLICY == 4
+            } else if (env::memory_policy() == 4) {
                 static constexpr std::size_t zero = 0;
-                static const std::size_t pageblock = PAGE_BLOCK * granularity;
+                static const std::size_t pageblock = env::page_size() * granularity;
                 const std::size_t drift = (ptr - start_address) % granularity;
                 const std::size_t addr = (ptr - start_address) / granularity * granularity;
                 const std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 const std::size_t pagenum = lessaddr / pageblock;
-                const std::size_t offset = (addr >= granularity && homenode(ptr) == 0)
+                offset = (addr >= granularity && homenode(ptr) == 0)
                 ? pagenum / nodes * pageblock + lessaddr % pageblock + granularity + drift
                 : pagenum / nodes * pageblock + lessaddr % pageblock + drift;
-            #elif MEM_POLICY == 5
+            } else if (env::memory_policy() == 5) {
                 static constexpr std::size_t zero = 0;
                 static const std::size_t prime = (3 * nodes) / 2;
                 const std::size_t drift = (ptr - start_address) % granularity;
                 std::size_t addr = (ptr - start_address) / granularity * granularity;
-                std::size_t offset, lessaddr = (addr >= granularity) ? addr - granularity : zero;
+                std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 std::size_t pagenum = lessaddr / granularity;
                 if ((addr <= (nodes * granularity)) || ((pagenum % prime) >= (std::size_t)nodes))
                     offset = (pagenum / nodes) * granularity + (addr > 0 && !homenode(ptr)) * granularity + drift;
@@ -209,13 +209,13 @@ namespace argo {
                         }
                     }
                 }
-            #elif MEM_POLICY == 6
+            } else if (env::memory_policy() == 6) {
                 static constexpr std::size_t zero = 0;
-                static const std::size_t pageblock = PAGE_BLOCK * granularity;
+                static const std::size_t pageblock = env::page_size() * granularity;
                 static const std::size_t prime = (3 * nodes) / 2;
                 const std::size_t drift = (ptr - start_address) % granularity;
                 std::size_t addr = (ptr - start_address) / granularity * granularity;
-                std::size_t offset, lessaddr = (addr >= granularity) ? addr - granularity : zero;
+                std::size_t lessaddr = (addr >= granularity) ? addr - granularity : zero;
                 std::size_t pagenum = lessaddr / pageblock;
                 if ((addr <= (nodes * pageblock)) || ((pagenum % prime) >= (std::size_t)nodes))
                     offset = (pagenum / nodes) * pageblock + lessaddr % pageblock + (addr > 0 && !homenode(ptr)) * granularity + drift;
@@ -236,16 +236,16 @@ namespace argo {
                         }
                     }
                 }
-            #elif MEM_POLICY == 7
+            } else if (env::memory_policy() == 7) {
                 const std::size_t addr = ptr - start_address;
                 const std::size_t drift = addr % granularity;
                 const std::size_t index = 2 * (addr / granularity);
                 pthread_mutex_lock(&ownermutex);
                 MPI_Win_lock(MPI_LOCK_SHARED, workrank, 0, ownerWindow);
-                const std::size_t offset = globalOwners[index + 1] + drift;
+                offset = globalOwners[index + 1] + drift;
                 MPI_Win_unlock(workrank, ownerWindow);
                 pthread_mutex_unlock(&ownermutex);
-            #endif
+            }
 
             if(offset >=(std::size_t)size_per_node){
                 exit(EXIT_FAILURE);
